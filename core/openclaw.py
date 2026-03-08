@@ -10,6 +10,8 @@ Configuration (priority: env vars > config file > defaults):
                 "token": "your_token",
                 "session_key": "main",
                 "tts_enabled": False,  # Enable Doubao TTS to play OpenClaw responses
+                "blocking_playback": False,  # Non-blocking by default
+                "ack_timeout": 10,  # Seconds to wait for accepted ack
             }
         }
 

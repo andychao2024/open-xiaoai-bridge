@@ -379,7 +379,8 @@ APP_CONFIG = {
         "token": "",  # 认证令牌（如果需要）
         "session_key": "main",  # 会话标识
         "tts_enabled": False,  # 启用 Doubao TTS 播放 OpenClaw 回复
-        "blocking_playback": True,  # TTS 播放是否阻塞等待完成 (默认 True)
+        "blocking_playback": False,  # TTS 播放是否阻塞等待完成 (默认 False)
+        "ack_timeout": 10,  # 发送消息时等待 OpenClaw accepted 回执的超时时间（秒）
         "tts_speaker": "zh_female_cancan_mars_bigtts",  # 可选：自定义音色，不设置则使用 tts.doubao.default_speaker
     },
 }
@@ -556,7 +557,6 @@ APP_CONFIG = {
 ```
 
 注意：需要先配置 `tts.doubao` 的 API 凭证才能正常使用。
-```
 
 #### Q：如何为 OpenClaw 设置不同的 TTS 音色？
 
@@ -580,17 +580,22 @@ APP_CONFIG = {
 
 #### Q：TTS 播放是阻塞还是非阻塞的？
 
-默认使用**阻塞方式**（`blocking_playback: True`），即等待音频播放完成才返回。如果你想改为非阻塞方式，可以设置：
+默认使用**非阻塞方式**（`blocking_playback: False`），即启动播放后立即返回。如果你想改为阻塞方式，可以设置：
 
 ```python
 APP_CONFIG = {
     "openclaw": {
         "tts_enabled": True,
-        "blocking_playback": False,  # 非阻塞播放
+        "blocking_playback": True,  # 阻塞播放
     },
 }
 ```
 
 **区别**：
-- **阻塞模式**（默认）：播放完成后才继续执行，不会被其他音频打断
-- **非阻塞模式**：启动播放后立即返回，可能被后续的音频指令打断
+- **非阻塞模式**（默认）：启动播放后立即返回，可能被后续的音频指令打断
+- **阻塞模式**：播放完成后才继续执行，不会被其他音频打断
+
+#### Q：`app.send_to_openclaw(..., wait_response=False)` 返回 `True` 代表什么？
+
+代表 OpenClaw 已返回 `accepted` 回执，消息已被网关接收；此时并不代表 AI 回复已生成完成。  
+如果需要等待完整文本回复，请使用 `wait_response=True`。
