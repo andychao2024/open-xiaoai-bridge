@@ -4,6 +4,24 @@ import signal
 import sys
 import time
 
+# Fix: Add onnxruntime library path for sherpa_onnx on macOS/Linux
+# This ensures sherpa_onnx can find libonnxruntime at runtime
+if sys.platform in ("darwin", "linux"):
+    try:
+        import onnxruntime as ort
+        ort_lib_dir = os.path.join(os.path.dirname(ort.__file__), "capi")
+        if os.path.exists(ort_lib_dir):
+            if sys.platform == "darwin":
+                os.environ.setdefault("DYLD_LIBRARY_PATH", "")
+                if ort_lib_dir not in os.environ["DYLD_LIBRARY_PATH"]:
+                    os.environ["DYLD_LIBRARY_PATH"] = ort_lib_dir + ":" + os.environ["DYLD_LIBRARY_PATH"]
+            else:  # linux
+                os.environ.setdefault("LD_LIBRARY_PATH", "")
+                if ort_lib_dir not in os.environ["LD_LIBRARY_PATH"]:
+                    os.environ["LD_LIBRARY_PATH"] = ort_lib_dir + ":" + os.environ["LD_LIBRARY_PATH"]
+    except ImportError:
+        pass
+
 from core.app import MainApp
 from core.utils.logger import logger
 
@@ -17,17 +35,26 @@ enable_api_server = False  # 是否开启 API Server
 
 def setup_config():
     """解析命令行参数和环境变量"""
-    global connect_xiaozhi, enable_api_server
+    global connect_xiaozhi, enable_api_server, enable_xiaozhi, enable_openclaw
 
     parser = argparse.ArgumentParser(description="小爱音箱接入 Open XiaoAI")
     parser.parse_args()
 
     # 从环境变量读取配置
-    connect_xiaozhi = os.environ.get("XIAOZHI_ENABLE", "").lower() in ("1", "true", "yes")
     enable_api_server = os.environ.get("API_SERVER_ENABLE", "").lower() in ("1", "true", "yes")
+    enable_xiaozhi = os.environ.get("XIAOZHI_ENABLE", "").lower() in ("1", "true", "yes")
+    enable_openclaw = os.environ.get("OPENCLAW_ENABLED", "").lower() in ("1", "true", "yes")
 
-    logger.info(f"[Main] Config: XIAOZHI_ENABLE={os.environ.get('XIAOZHI_ENABLE', 'not set')}, API_SERVER_ENABLE={os.environ.get('API_SERVER_ENABLE', 'not set')}")
-    logger.info(f"[Main] Parsed: connect_xiaozhi={connect_xiaozhi}, enable_api_server={enable_api_server}")
+    logger.info(f"[Main] Config: XIAOZHI_ENABLE={os.environ.get('XIAOZHI_ENABLE', 'not set')}, "
+                f"API_SERVER_ENABLE={os.environ.get('API_SERVER_ENABLE', 'not set')}, "
+                f"OPENCLAW_ENABLED={os.environ.get('OPENCLAW_ENABLED', 'not set')}")
+
+    # 打印模块启用情况
+    logger.info("[Main] 模块启用情况:")
+    logger.info("  - 小爱指令拦截器启用")
+    logger.info(f"  - 小智 AI Bridge (支持唤醒和连续对话):  {'启用' if enable_xiaozhi else '禁用'}")
+    logger.info(f"  - OpenClaw Bridge: {'启用' if enable_openclaw else '禁用'}")
+    logger.info(f"  - API Server: {'启用' if enable_api_server else '禁用'}")
 
 
 def run_services(xiaozhi_mode: bool = False):
@@ -36,13 +63,10 @@ def run_services(xiaozhi_mode: bool = False):
     Args:
         xiaozhi_mode: 是否启动小智 AI 完整服务（包括 VAD/KWS/GUI）
     """
-    global main_app_instance, enable_api_server
-
-    mode_name = "小爱音箱 + 小智 AI" if xiaozhi_mode else "仅小爱音箱"
-    logger.info(f"[Main] 启动模式：{mode_name}")
+    global main_app_instance, enable_api_server, enable_openclaw
 
     # 统一使用 MainApp 管理所有服务
-    main_app_instance = MainApp.instance(enable_xiaozhi=xiaozhi_mode)
+    main_app_instance = MainApp.instance(enable_xiaozhi=xiaozhi_mode, enable_openclaw=enable_openclaw)
     main_app_instance.run(enable_api_server=enable_api_server)
 
     # 主线程保持运行
@@ -54,8 +78,8 @@ def run_services(xiaozhi_mode: bool = False):
 
 
 def main():
-    global connect_xiaozhi
-    run_services(xiaozhi_mode=connect_xiaozhi)
+    global enable_xiaozhi
+    run_services(xiaozhi_mode=enable_xiaozhi)
     return 0
 
 

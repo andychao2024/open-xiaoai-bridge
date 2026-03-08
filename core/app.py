@@ -35,21 +35,23 @@ class MainApp:
     _instance = None
 
     @classmethod
-    def instance(cls, enable_xiaozhi: bool = True):
+    def instance(cls, enable_xiaozhi: bool = True, enable_openclaw: bool = False):
         """Get singleton instance.
 
         Args:
             enable_xiaozhi: Whether to enable XiaoZhi AI connection (default: True)
+            enable_openclaw: Whether to enable OpenClaw connection (default: False)
         """
         if cls._instance is None:
-            cls._instance = MainApp(enable_xiaozhi=enable_xiaozhi)
+            cls._instance = MainApp(enable_xiaozhi=enable_xiaozhi, enable_openclaw=enable_openclaw)
         return cls._instance
 
-    def __init__(self, enable_xiaozhi: bool = True):
+    def __init__(self, enable_xiaozhi: bool = True, enable_openclaw: bool = False):
         """Initialize the main application.
 
         Args:
             enable_xiaozhi: Whether to enable XiaoZhi AI connection
+            enable_openclaw: Whether to enable OpenClaw connection
         """
         if MainApp._instance is not None:
             raise Exception("MainApp is singleton, use instance() to get instance")
@@ -60,6 +62,7 @@ class MainApp:
 
         # Feature flags
         self._enable_xiaozhi = enable_xiaozhi
+        self._enable_openclaw = enable_openclaw
 
         # Device state
         self.device_state = DeviceState.IDLE
@@ -131,7 +134,9 @@ class MainApp:
             self._init_audio()
 
         # Initialize OpenClaw if enabled
-        if OpenClawManager.is_enabled():
+        if self._enable_openclaw:
+            # Initialize OpenClaw config from environment variables
+            OpenClawManager.initialize_from_config()
             asyncio.run_coroutine_threadsafe(OpenClawManager.connect(), self.loop)
 
         # Start API Server if enabled
@@ -441,6 +446,10 @@ class MainApp:
         if self.xiaozhi and self.xiaozhi.is_connected():
             await self.xiaozhi.send_text(text)
 
-    async def send_to_openclaw(self, text: str) -> bool:
+    async def send_to_openclaw(self, text: str, wait_response: bool = False) -> bool | str | None:
         """Send message to OpenClaw."""
-        return await OpenClawManager.send_message(text)
+        try:
+            return await OpenClawManager.send_message(text, wait_response=wait_response)
+        except Exception as e:
+            logger.error(f"[MainApp] 发送消息到 OpenClaw 失败: {type(e).__name__}: {e}")
+            return False

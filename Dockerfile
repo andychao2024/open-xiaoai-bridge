@@ -44,8 +44,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopus-dev \
     && rm -rf /var/lib/apt/lists/*
 
-ENV CLI=true
-
 COPY --from=builder /app/.venv /app/.venv
 COPY main.py .
 COPY config.py .

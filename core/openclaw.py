@@ -64,7 +64,7 @@ class OpenClawManager:
     # Config
     _enabled = False
     _tts_enabled = False  # Enable Doubao TTS to play OpenClaw responses
-    _blocking_playback = True  # Whether to use blocking playback (wait for audio to finish)
+    _blocking_playback = False  # Whether to use blocking playback (wait for audio to finish)
     _tts_speaker = None  # Custom speaker for OpenClaw TTS (uses tts.doubao.default_speaker if not set)
     _url = None
     _token = None
@@ -72,19 +72,24 @@ class OpenClawManager:
     last_error: str | None = None
 
     # Response tracking for TTS
-    _response_events: dict[str, asyncio.Event] = {}
+    _response_events: dict[str, asyncio.Future] = {}
     _response_texts: dict[str, str] = {}
     _response_timeout = 120  # seconds to wait for agent response
+    _ack_timeout = 10  # seconds to wait for request accepted response
 
     @classmethod
-    def initialize(cls):
-        """Initialize the manager (called once at startup).
+    def initialize_from_config(cls, enabled: bool | None = None):
+        """Initialize the manager from config.
 
         Configuration priority (highest first):
         1. Environment variables (OPENCLAW_*)
         2. APP_CONFIG["openclaw"]
         3. Default values
+
+        Args:
+            enabled: Override enable flag. If None, use environment variable or config.
         """
+        logger.info("[OpenClaw] Initializing from config...")
         if cls._initialized:
             return
 
@@ -96,20 +101,25 @@ class OpenClawManager:
         cfg_token = config.get("token", "")
         cfg_session = config.get("session_key", "main")
         cfg_tts_enabled = config.get("tts_enabled", False)
-        cfg_blocking_playback = config.get("blocking_playback", True)
+        cfg_blocking_playback = config.get("blocking_playback", False)
         cfg_tts_speaker = config.get("tts_speaker", None)
+        cfg_ack_timeout = config.get("ack_timeout", 10)
 
-        # Only environment variable controls enable/disable
-        env_enabled = get_env("OPENCLAW_ENABLED")
-        if env_enabled is not None:
-            cls._enabled = env_enabled.lower() in ("1", "true", "yes")
+        # Enable/disable: parameter > environment variable > default (False)
+        if enabled is not None:
+            cls._enabled = enabled
         else:
-            cls._enabled = False  # Default to disabled if no env var set
+            env_enabled = get_env("OPENCLAW_ENABLED")
+            if env_enabled is not None:
+                cls._enabled = env_enabled.lower() in ("1", "true", "yes")
+            else:
+                cls._enabled = False  # Default to disabled if no env var set
 
         # TTS config: only from config file
         cls._tts_enabled = cfg_tts_enabled
         cls._blocking_playback = cfg_blocking_playback
         cls._tts_speaker = cfg_tts_speaker
+        cls._ack_timeout = cfg_ack_timeout
 
         cls._url = get_env("OPENCLAW_URL", cfg_url)
         cls._token = get_env("OPENCLAW_TOKEN", cfg_token)
@@ -120,16 +130,19 @@ class OpenClawManager:
             if cls._tts_enabled:
                 mode = "blocking" if cls._blocking_playback else "non-blocking"
                 logger.info(f"[OpenClaw] TTS playback enabled ({mode} mode) - OpenClaw responses will be played via Doubao TTS")
-        else:
-            logger.info("[OpenClaw] Disabled (set OPENCLAW_ENABLED=1 env to enable)")
 
         cls._initialized = True
+
+    @classmethod
+    def initialize(cls, enabled: bool | None = None):
+        """Deprecated: Use initialize_from_config instead."""
+        cls.initialize_from_config(enabled=enabled)
 
     @classmethod
     async def connect(cls) -> bool:
         """Connect to OpenClaw gateway."""
         if not cls._initialized:
-            cls.initialize()
+            cls.initialize_from_config()
 
         if not cls._enabled:
             return False
@@ -212,92 +225,127 @@ class OpenClawManager:
             cls._websocket = None
 
     @classmethod
-    async def send_message(cls, text: str, wait_response: bool = None) -> bool:
+    async def send_message(cls, text: str, wait_response: bool = False) -> bool | str | None:
         """Send a message to OpenClaw.
-
-        Sends message and waits for agent response to confirm acceptance,
-        but does not wait for the full conversation completion (unless TTS is enabled).
 
         Args:
             text: The message text to send
-            wait_response: Whether to wait for agent's text response and play via TTS.
-                          If None, uses the configured tts_enabled setting.
+            wait_response: Whether to wait for agent's text response synchronously.
+                          - False (default): Send and return immediately, returns True/False
+                          - True: Wait for response and return response text
 
         Returns:
-            True if message was accepted by OpenClaw, False otherwise
+            - False: Message was not accepted by OpenClaw
+            - True: Message was accepted (wait_response=False)
+            - str: Response text from OpenClaw (wait_response=True)
+            - None: Timeout or error waiting for response (wait_response=True)
         """
         if not cls._initialized:
-            cls.initialize()
+            cls.initialize_from_config()
 
         if not cls._enabled:
+            logger.warning("[OpenClaw] send_message called but OpenClaw is disabled")
             return False
 
         if not cls._connected:
+            logger.info("[OpenClaw] send_message called but not connected, trying to connect...")
             # Try to connect if not connected
             if not await cls.connect():
                 return False
 
-        # Determine if we should wait for response and play via TTS
-        should_wait_response = wait_response if wait_response is not None else cls._tts_enabled
-
         try:
             idem = str(uuid.uuid4())
-            logger.info(f"[OpenClaw] Sending message: {text[:50]}...")
+            logger.info(f"[OpenClaw] Sending message: {text}")
 
-            # Set up response tracking if TTS is enabled
-            response_event = None
-            if should_wait_response:
-                response_event = asyncio.Event()
-                cls._response_events[idem] = response_event
-                cls._response_texts[idem] = ""
+            # Always set up response tracking (for background receiving)
+            loop = asyncio.get_running_loop()
+            response_waiter = loop.create_future()
+            cls._response_events[idem] = response_waiter
+            cls._response_texts[idem] = ""
+            logger.info(f"[OpenClaw] Created response tracking: idem={idem}")
 
-            # Send agent request and wait for acceptance response
-            agent_res = await cls._request(
-                "agent",
-                {
-                    "message": text,
-                    "sessionKey": cls._session_key,
-                    "deliver": False,
-                    "idempotencyKey": idem,
-                },
-                timeout=60,
-            )
-            logger.debug(f"[OpenClaw] Agent response: {agent_res}")
+            request_params = {
+                "message": text,
+                "sessionKey": cls._session_key,
+                "thinking": "low",
+                "deliver": False,
+                "idempotencyKey": idem,
+            }
 
-            if not agent_res.get("ok"):
-                err = (agent_res.get("error") or {}).get("message") or str(agent_res)
-                cls.last_error = err
-                logger.error(f"[OpenClaw] agent call failed: {agent_res}")
-                # Clean up response tracking
-                if should_wait_response:
+            if wait_response:
+                # wait_response=True: keep strict request/ack flow and return response text.
+                logger.info("[OpenClaw] Calling _request for agent method (sync mode)...")
+                agent_res = await cls._request("agent", request_params, timeout=10)
+                logger.debug(f"[OpenClaw] Agent response: {agent_res}")
+
+                if not agent_res.get("ok"):
+                    err = (agent_res.get("error") or {}).get("message") or str(agent_res)
+                    cls.last_error = err
+                    logger.error(f"[OpenClaw] agent call failed: {agent_res}")
                     cls._response_events.pop(idem, None)
                     cls._response_texts.pop(idem, None)
-                return False
+                    return False
 
-            run_id = (agent_res.get("payload") or {}).get("runId")
-            if not run_id:
-                cls.last_error = "agent response missing runId"
-                logger.error(f"[OpenClaw] agent response missing runId: {agent_res}")
-                # Clean up response tracking
-                if should_wait_response:
+                run_id = (agent_res.get("payload") or {}).get("runId") or idem
+                logger.info(f"[OpenClaw] Message accepted, runId: {run_id}")
+
+                # Link run_id to tracking map.
+                cls._response_events[run_id] = response_waiter
+                if run_id not in cls._response_texts:
+                    cls._response_texts[run_id] = cls._response_texts.get(idem, "")
+                if idem != run_id:
                     cls._response_events.pop(idem, None)
                     cls._response_texts.pop(idem, None)
-                return False
 
-            logger.info(f"[OpenClaw] Message accepted, runId: {run_id}")
+                # wait_response=True: wait synchronously for the response text
+                try:
+                    await asyncio.wait_for(response_waiter, timeout=cls._response_timeout)
+                    response_text = cls._response_texts.pop(run_id, "")
+                    cls._response_events.pop(run_id, None)
+                    return response_text
+                except asyncio.TimeoutError:
+                    logger.warning(f"[OpenClaw] Timeout waiting for response (runId: {run_id})")
+                    cls._response_events.pop(run_id, None)
+                    cls._response_texts.pop(run_id, None)
+                    return None
+            else:
+                # wait_response=False: ensure request is accepted, then continue in background.
+                req_id, ack_future = await cls._send_request_with_future("agent", request_params)
+                logger.debug(f"[OpenClaw] Agent request sent (async mode), req_id={req_id}, idem={idem}")
+                try:
+                    res = await asyncio.wait_for(ack_future, timeout=cls._ack_timeout)
+                    ok = res.get("ok") if isinstance(res, dict) else False
+                    payload = res.get("payload") if isinstance(res, dict) else {}
+                    run_id = payload.get("runId") if isinstance(payload, dict) else None
+                    status = payload.get("status") if isinstance(payload, dict) else None
 
-            # If TTS is enabled, wait for response and play it
-            if should_wait_response and response_event:
-                # Link run_id to the idempotency key for response tracking
-                cls._response_events[run_id] = response_event
-                cls._response_texts[run_id] = ""
-                cls._response_events.pop(idem, None)
-                cls._response_texts.pop(idem, None)
+                    if not ok:
+                        err = (res.get("error") or {}).get("message") if isinstance(res, dict) else "agent request rejected"
+                        cls.last_error = err or "agent request rejected"
+                        logger.error(f"[OpenClaw] Agent request rejected: req_id={req_id}, idem={idem}, error={cls.last_error}")
+                        waiter = cls._response_events.pop(idem, None)
+                        cls._response_texts.pop(idem, None)
+                        if waiter and not waiter.done():
+                            waiter.get_loop().call_soon_threadsafe(waiter.set_result, None)
+                        return False
 
-                # Start a task to wait for response and play via TTS
-                asyncio.create_task(cls._wait_and_play_response(run_id))
+                    final_run_id = run_id or idem
+                    logger.debug(
+                        f"[OpenClaw] Agent request accepted: req_id={req_id}, runId={final_run_id}, status={status}"
+                    )
+                    if final_run_id != idem and idem in cls._response_events:
+                        cls._response_events[final_run_id] = cls._response_events.pop(idem)
+                        cls._response_texts[final_run_id] = cls._response_texts.pop(idem, "")
 
-            return True
+                    asyncio.create_task(cls._wait_and_play_response(final_run_id))
+                    return True
+                except asyncio.TimeoutError:
+                    logger.warning(f"[OpenClaw] Agent ack timeout: req_id={req_id}, idem={idem}, timeout={cls._ack_timeout}s")
+                    cls._response_events.pop(idem, None)
+                    cls._response_texts.pop(idem, None)
+                    return False
+                finally:
+                    cls._pending.pop(req_id, None)
         except Exception as e:
             import traceback
             logger.error(f"[OpenClaw] Failed to send message: {type(e).__name__}: {e}")
@@ -307,6 +355,26 @@ class OpenClawManager:
     @classmethod
     async def _request(cls, method: str, params=None, timeout: float = 30):
         """Send a request and wait for response."""
+        req_id, fut = await cls._send_request_with_future(method, params)
+        logger.debug(f"[OpenClaw] _request waiting for response: req_id={req_id}, method={method}")
+        try:
+            result = await asyncio.wait_for(fut, timeout=timeout)
+            payload = result.get("payload") if isinstance(result, dict) else {}
+            status = payload.get("status") if isinstance(payload, dict) else None
+            logger.info(
+                f"[OpenClaw] _request received response: req_id={req_id}, ok={result.get('ok') if isinstance(result, dict) else None}, status={status}"
+            )
+            return result
+        except asyncio.TimeoutError:
+            logger.error(f"[OpenClaw] Request timeout: method={method}, req_id={req_id}, timeout={timeout}s")
+            raise
+        finally:
+            cls._pending.pop(req_id, None)
+            logger.debug(f"[OpenClaw] _request cleaned up: req_id={req_id}")
+
+    @classmethod
+    async def _send_request_with_future(cls, method: str, params=None) -> tuple[str, asyncio.Future]:
+        """Send request frame and return (request_id, response_future)."""
         if not cls._websocket:
             raise RuntimeError("OpenClaw websocket is not connected")
 
@@ -315,24 +383,15 @@ class OpenClawManager:
         fut = loop.create_future()
         cls._pending[req_id] = fut
 
-        await cls._websocket.send(
-            json.dumps(
-                {
-                    "type": "req",
-                    "id": req_id,
-                    "method": method,
-                    "params": params or {},
-                }
-            )
-        )
-
-        try:
-            return await asyncio.wait_for(fut, timeout=timeout)
-        except asyncio.TimeoutError:
-            logger.error(f"[OpenClaw] Request timeout: {method} (timeout={timeout}s)")
-            raise
-        finally:
-            cls._pending.pop(req_id, None)
+        request_payload = {
+            "type": "req",
+            "id": req_id,
+            "method": method,
+            "params": params or {},
+        }
+        logger.debug(f"[OpenClaw] _request sending: req_id={req_id}, method={method}")
+        await cls._websocket.send(json.dumps(request_payload))
+        return req_id, fut
 
     @classmethod
     async def _receiver(cls):
@@ -356,15 +415,21 @@ class OpenClawManager:
                     # Handle event messages (including tick events from OpenClaw)
                     if msg_type == "event":
                         event_name = data.get("event", "")
+                        logger.debug(f"[OpenClaw] Received event: {event_name}")
                         if event_name == "tick":
                             logger.debug("[OpenClaw] Tick event received")
                         # Handle agent response events for TTS playback
-                        elif event_name in ("run.completed", "run.output", "run.text"):
-                            await cls._handle_agent_event(data)
+                        elif event_name in ("run.completed", "run.output", "run.text", "agent"):
+                            logger.debug(f"[OpenClaw] Agent event received: {event_name}")
+                            # Do not block receiver loop on event handling; keep processing res frames promptly.
+                            asyncio.create_task(cls._handle_agent_event(data))
+                        else:
+                            logger.debug(f"[OpenClaw] Other event received: {event_name}, data: {data}")
                         # Any event counts as server activity
                         continue
 
                     if msg_type != "res":
+                        logger.debug(f"[OpenClaw] Non-res message type: {msg_type}, data: {data}")
                         continue
 
                     req_id = data.get("id")
@@ -372,10 +437,26 @@ class OpenClawManager:
                         continue
 
                     future = cls._pending.get(req_id)
+                    logger.debug(
+                        f"[OpenClaw] _receiver processing res: req_id={req_id}, has_future={future is not None}, future_done={future.done() if future else None}"
+                    )
                     if future and not future.done():
-                        future.set_result(data)
+                        logger.debug(f"[OpenClaw] _receiver setting result for req_id={req_id}")
+                        # Complete the Future on its owner loop to avoid cross-loop wakeup delays.
+                        fut_loop = future.get_loop()
+                        fut_loop.call_soon_threadsafe(future.set_result, data)
+                        # Note: OpenClaw may send a second res for agent method (completed status)
+                        # We keep the entry in _pending to handle potential second response
+                    elif future and future.done():
+                        # OpenClaw sends second res for agent method, keep logs lightweight.
+                        payload = data.get("payload") if isinstance(data, dict) else {}
+                        status = payload.get("status") if isinstance(payload, dict) else None
+                        summary = payload.get("summary") if isinstance(payload, dict) else None
+                        logger.debug(
+                            f"[OpenClaw] _receiver ignoring second res for req_id={req_id}, status={status}, summary={summary}"
+                        )
                 except json.JSONDecodeError:
-                    pass
+                    logger.warning(f"[OpenClaw] Failed to decode message: {message[:200]}")
         except asyncio.CancelledError:
             logger.debug("[OpenClaw] Receiver task cancelled")
             raise
@@ -461,15 +542,27 @@ class OpenClawManager:
     def is_enabled(cls) -> bool:
         """Check if OpenClaw is enabled."""
         if not cls._initialized:
-            cls.initialize()
+            cls.initialize_from_config()
         return cls._enabled
 
     @classmethod
     def is_tts_enabled(cls) -> bool:
         """Check if TTS playback is enabled."""
         if not cls._initialized:
-            cls.initialize()
+            cls.initialize_from_config()
         return cls._tts_enabled
+
+    @classmethod
+    def _signal_response_ready(cls, run_id: str):
+        """Mark response waiter as ready in a thread-safe way."""
+        waiter = cls._response_events.get(run_id)
+        if not waiter:
+            logger.warning(f"[OpenClaw] ⚠️ No event found for runId={run_id}, active runs: {list(cls._response_events.keys())}")
+            return
+        if waiter.done():
+            return
+        fut_loop = waiter.get_loop()
+        fut_loop.call_soon_threadsafe(waiter.set_result, None)
 
     @classmethod
     async def _handle_agent_event(cls, event_data: dict):
@@ -477,50 +570,83 @@ class OpenClawManager:
         try:
             event_name = event_data.get("event", "")
             payload = event_data.get("payload", {})
+            run_id = payload.get("runId")
+
+            # Debug: log all agent events
+            logger.debug(f"[OpenClaw] Received event '{event_name}' for runId={run_id}")
+            logger.debug(f"[OpenClaw] Event payload: {payload}")
 
             if event_name == "run.completed":
                 # Final response
-                run_id = payload.get("runId")
                 output = payload.get("output", {})
                 response_text = output.get("text", "")
 
                 if run_id and response_text:
-                    logger.info(f"[OpenClaw] Received final response for run {run_id}: {response_text[:100]}...")
+                    logger.info(f"[OpenClaw] ✅ Final response for {run_id}: {response_text[:100]}...")
                     cls._response_texts[run_id] = response_text
-                    event = cls._response_events.get(run_id)
-                    if event:
-                        event.set()
+                    logger.debug(f"[OpenClaw] Setting event for runId={run_id}")
+                    cls._signal_response_ready(run_id)
 
             elif event_name == "run.output":
                 # Streaming output
-                run_id = payload.get("runId")
                 output = payload.get("output", {})
                 chunk_text = output.get("text", "")
 
                 if run_id and chunk_text:
+                    logger.debug(f"[OpenClaw] Output chunk for {run_id}: {chunk_text[:50]}...")
                     # Accumulate text chunks
                     current_text = cls._response_texts.get(run_id, "")
                     cls._response_texts[run_id] = current_text + chunk_text
 
             elif event_name == "run.text":
                 # Text event
-                run_id = payload.get("runId")
                 text = payload.get("text", "")
 
                 if run_id and text:
+                    logger.info(f"[OpenClaw] ✅ Text event for {run_id}: {text[:100]}...")
                     cls._response_texts[run_id] = text
-                    event = cls._response_events.get(run_id)
-                    if event:
-                        event.set()
+                    logger.info(f"[OpenClaw] Setting event for runId={run_id}")
+                    cls._signal_response_ready(run_id)
+
+            elif event_name == "agent":
+                # Agent event from OpenClaw (stream: lifecycle or assistant)
+                stream = payload.get("stream", "")
+                data = payload.get("data", {})
+
+                if stream == "assistant":
+                    # Streaming text from assistant
+                    text = data.get("text", "")
+                    delta = data.get("delta", "")
+
+                    if run_id and text:
+                        logger.debug(
+                            f"[OpenClaw] Agent assistant stream for {run_id}: text len={len(text)}, delta_len={len(delta) if delta else 0}"
+                        )
+                        # Accumulate or store the text
+                        cls._response_texts[run_id] = text
+                        # Don't set event yet, wait for lifecycle end
+
+                elif stream == "lifecycle":
+                    phase = data.get("phase", "")
+                    logger.debug(f"[OpenClaw] Agent lifecycle event for {run_id}: phase={phase}")
+
+                    if phase == "end":
+                        # Agent run completed
+                        response_text = cls._response_texts.get(run_id, "")
+                        if run_id and response_text:
+                            logger.info(f"[OpenClaw] ✅ Agent completed for {run_id}: {response_text[:100]}...")
+                        logger.info(f"[OpenClaw] Setting event for runId={run_id}")
+                        cls._signal_response_ready(run_id)
 
         except Exception as e:
-            logger.debug(f"[OpenClaw] Error handling agent event: {e}")
+            logger.error(f"[OpenClaw] Error handling agent event: {e}")
+            logger.debug(f"[OpenClaw] Event data: {event_data}")
 
     @classmethod
     async def _wait_and_play_response(cls, run_id: str):
-        """Wait for agent response and play via TTS."""
+        """Wait for agent response and optionally play via TTS."""
         try:
-            logger.info(f"[OpenClaw] Waiting for response (runId: {run_id})...")
+            logger.debug(f"[OpenClaw] Waiting for response (runId: {run_id})...")
 
             event = cls._response_events.get(run_id)
             if not event:
@@ -529,7 +655,7 @@ class OpenClawManager:
 
             # Wait for response with timeout
             try:
-                await asyncio.wait_for(event.wait(), timeout=cls._response_timeout)
+                await asyncio.wait_for(event, timeout=cls._response_timeout)
             except asyncio.TimeoutError:
                 logger.warning(f"[OpenClaw] Timeout waiting for response (runId: {run_id})")
                 # Still try to play whatever we got
@@ -541,8 +667,11 @@ class OpenClawManager:
             cls._response_texts.pop(run_id, None)
 
             if response_text:
-                logger.info(f"[OpenClaw] Playing response via TTS: {response_text[:100]}...")
-                await cls._play_response_with_tts(response_text)
+                if cls._tts_enabled:
+                    logger.debug(f"[OpenClaw] Playing response via TTS: {response_text[:100]}...")
+                    await cls._play_response_with_tts(response_text)
+                else:
+                    logger.info(f"[OpenClaw] Received response (TTS disabled): {response_text[:100]}...")
             else:
                 logger.warning(f"[OpenClaw] No response text received for run {run_id}")
 
@@ -593,7 +722,7 @@ class OpenClawManager:
                 logger.error("[OpenClaw] TTS synthesis returned empty audio")
                 return
 
-            logger.info(f"[OpenClaw] TTS synthesized: {len(audio_data)} bytes")
+            logger.debug(f"[OpenClaw] TTS synthesized: {len(audio_data)} bytes")
 
             # Play through speaker
             speaker = get_speaker()
@@ -621,5 +750,4 @@ class OpenClawManager:
                 logger.error(f"[OpenClaw] Fallback TTS also failed: {fallback_error}")
 
 
-# Auto-initialize on import
-OpenClawManager.initialize()
+# No auto-initialization - call OpenClawManager.initialize_from_config() explicitly

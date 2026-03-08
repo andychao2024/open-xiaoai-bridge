@@ -166,7 +166,7 @@ class XiaoAI:
         open_xiaoai_server.register_fn("on_input_data", cls.on_input_data)
         open_xiaoai_server.register_fn("on_event", cls.__on_event)
         cls.__init_background_event_loop()
-        print("[XiaoAI] 启动小爱音箱服务...")
+        logger.info("[XiaoAI] 启动小爱音箱服务...")
         print(ASCII_BANNER)
         await open_xiaoai_server.start_server()
 

@@ -462,9 +462,9 @@ class DoubaoTTS:
         if audio_format is None:
             try:
                 from config import APP_CONFIG
-                audio_format = APP_CONFIG.get("tts", {}).get("doubao", {}).get("audio_format", "ogg_opus")
+                audio_format = APP_CONFIG.get("tts", {}).get("doubao", {}).get("audio_format", "mp3")
             except Exception:
-                audio_format = "ogg_opus"
+                audio_format = "mp3"
         self.audio_format = audio_format
 
     @classmethod
@@ -555,8 +555,6 @@ class DoubaoTTS:
             format = self.audio_format
         headers = self._get_headers()
         payload = self._build_payload(text, format, sample_rate, speed, context_texts=context_texts, emotion=emotion)
-
-        print(f"[DoubaoTTS] Request: speaker={self.speaker}, resource_id={self.resource_id}")
 
         session = requests.Session()
         response = None

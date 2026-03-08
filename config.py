@@ -27,9 +27,9 @@ async def before_wakeup(speaker, text, source, xiaozhi, xiaoai, app):
         return True
 
     if source == "xiaoai":
-        # 打断原来的小爱同学
-        await speaker.abort_xiaoai()
         if text == "召唤小智":
+            # 打断原来的小爱同学
+            await speaker.abort_xiaoai()
             # 停止连续对话
             xiaoai.stop_conversation()
             # 等待 2 秒，让小爱 TTS 恢复可用
@@ -38,8 +38,15 @@ async def before_wakeup(speaker, text, source, xiaozhi, xiaoai, app):
             await speaker.play(url="http://127.0.0.1:8080/hello.wav")
             # 唤醒小智 AI
             return True
-        if text.startswith("让龙虾"):
-            await app.send_to_openclaw(text.replace("让龙虾", ""))
+        if "小白" in text:
+            forwarded_text = text.split("小白", 1)[1]
+            # 打断原来的小爱同学
+            await speaker.abort_xiaoai()
+            success = await app.send_to_openclaw(forwarded_text)
+            if not success:
+               # 等待 2 秒，让小爱 TTS 恢复可用
+               time.sleep(2)
+               await speaker.play(text="小白未在线")
             return False
             
 
@@ -95,19 +102,16 @@ APP_CONFIG = {
             # 豆包语音合成 API 配置
             # 文档地址: https://www.volcengine.com/docs/6561/1598757?lang=zh
             # 产品地址: https://www.volcengine.com/docs/6561/1871062
-            "app_id": "xxxxx",           # 你的 App ID
+            "app_id": "xxxx",         # 你的 App ID
             "access_key": "xxxxxx",       # 你的 Access Key
-            "default_speaker": "zh_female_xiaohe_uranus_bigtts",  # 音色 https://www.volcengine.com/docs/6561/1257544?lang=zh
-            "audio_format": "ogg_opus",   # 音频格式: ogg_opus, mp3, pcm (默认 ogg_opus，数据量更小下载更快)
+            "default_speaker": "zh_female_vv_uranus_bigtts",  # 音色 https://www.volcengine.com/docs/6561/1257544?lang=zh
         }
     },
     # OpenClaw Configuration
     "openclaw": {
-        "url": "ws://localhost:18789",  # OpenClaw WebSocket 地址
+        "url": "ws://127.0.0.1:18789",  # OpenClaw WebSocket 地址
         "token": "",  # OpenClaw 认证令牌
-        "session_key": "main",  # 会话标识
-        "tts_enabled": False,  # 启用 Doubao TTS 播放 OpenClaw 回复 (需要配置 tts.doubao)
-        "blocking_playback": True,  # TTS 播放是否阻塞等待完成 (默认 True)
-        # "tts_speaker": "zh_female_cancan_mars_bigtts",  # 可选：自定义音色，不设置则使用 tts.doubao.default_speaker
+        "session_key": "main", # 会话标识
+        "tts_enabled": True,  # 是否启用 TTS 播放
     },
 }
