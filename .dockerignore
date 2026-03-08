@@ -26,8 +26,7 @@ dist
 # Models (large files, should be downloaded separately)
 core/models/
 
-# Local config (user should mount their own)
-config.py
+# Local env files
 .env
 .env.local
 
