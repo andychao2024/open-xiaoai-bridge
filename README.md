@@ -4,7 +4,7 @@
 
 打破小爱音箱的封闭生态，灵活接入多种 AI 服务（小智 AI、OpenClaw 或自定义 Agent），提供 HTTP API 实现远程控制。致力于成为智能音箱与 AI 服务之间的标准桥接层。
 
-> 本项目由 [Open-XiaoAI](https://github.com/idootop/open-xiaoai) 的 `examples/xiaozhi/` 演进而来，在保留小智 AI 接入能力的基础上，新增 OpenClaw 集成、HTTP API Server 等功能，未来将成为独立项目发展。
+> 本项目由 [Open-XiaoAI](https://github.com/idootop/open-xiaoai) 的 `examples/xiaozhi/` 演进而来，在保留小智 AI 接入能力的基础上，新增 OpenClaw 集成、HTTP API Server 等功能，已成为独立项目发展。
 
 ## 功能特性
 
