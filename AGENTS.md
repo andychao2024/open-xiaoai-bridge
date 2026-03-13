@@ -1,38 +1,42 @@
 # AGENTS.md - Bridge Module Guide
 
-> 本目录包含让小爱音箱接入小智 AI 和 OpenClaw 的完整实现。
+> 本项目让小爱音箱接入小智 AI 和 OpenClaw 等外部 AI 服务。
 > 通过接管音箱的音频输入输出，实现与第三方 AI 服务的对话。
 
 ## 项目架构
 
 ```
-open-xiaoai/
-├── examples/bridge/           # AI Bridge：小爱 + 小智 AI + OpenClaw
-│   ├── main.py               # 程序入口
-│   ├── config.py             # 用户配置文件（唤醒词、TTS、OpenClaw 等）
-│   ├── src/                  # Rust 扩展源码（maturin 编译）
-│   │   ├── lib.rs            # Rust Python 扩展入口
-│   │   ├── server.rs         # 音频服务实现
-│   │   └── python.rs         # PyO3 Python 绑定
-│   └── core/                 # Python 核心源码（原 xiaozhi/）
-│       ├── app.py            # MainApp: 应用主控制器
-│       ├── xiaoai.py         # XiaoAI: 小爱音箱接口（事件、TTS、控制）
-│       ├── xiaozhi.py        # XiaoZhi: 小智 AI WebSocket 协议
-│       ├── openclaw.py       # OpenClawManager: OpenClaw 网关连接
-│       ├── ref.py            # 全局状态管理（get/set）
-│       ├── event.py          # EventManager: 事件总线
-│       ├── services/         # 服务层
-│       │   ├── speaker.py    # SpeakerManager: 音箱控制（播放/TTS/唤醒）
-│       │   ├── api_server.py # HTTP API 服务（远程控制）
-│       │   ├── audio/        # 音频处理
-│       │   │   ├── kws/      # 关键词唤醒（Sherpa）
-│       │   │   ├── vad/      # 语音活动检测（Silero）
-│       │   │   └── codec.py  # 音频编解码
-│       │   └── protocols/    # 通信协议
-│       └── utils/            # 工具类
-├── packages/client-rust/     # 小爱音箱 Client 端补丁（Rust）
-└── docs/                     # 文档
+open-xiaoai-bridge/
+├── main.py               # 程序入口
+├── config.py             # 用户配置文件（唤醒词、TTS、OpenClaw 等）
+├── src/                  # Rust 扩展源码（maturin 编译）
+│   ├── lib.rs            # Rust Python 扩展入口
+│   ├── server.rs         # 音频服务实现
+│   └── python.rs         # PyO3 Python 绑定
+├── core/                 # Python 核心源码
+│   ├── app.py            # MainApp: 应用主控制器
+│   ├── xiaoai.py         # XiaoAI: 小爱音箱接口（事件、TTS、控制）
+│   ├── xiaozhi.py        # XiaoZhi: 小智 AI WebSocket 协议
+│   ├── openclaw.py       # OpenClawManager: OpenClaw 网关连接
+│   ├── ref.py            # 全局状态管理（get/set）
+│   ├── event.py          # EventManager: 事件总线
+│   ├── services/         # 服务层
+│   │   ├── speaker.py    # SpeakerManager: 音箱控制（播放/TTS/唤醒）
+│   │   ├── api_server.py # HTTP API 服务（远程控制）
+│   │   ├── audio/        # 音频处理
+│   │   │   ├── kws/      # 关键词唤醒（Sherpa）
+│   │   │   ├── vad/      # 语音活动检测（Silero）
+│   │   │   ├── stream.py # 全局音频流管理
+│   │   │   └── codec.py  # 音频编解码
+│   │   └── protocols/    # 通信协议
+│   └── utils/            # 工具类
+└── skills/               # AI Agent 工具技能
+    └── xiaoai-tts/       # 通过 HTTP API 控制小爱音箱播放语音
 ```
+
+## 系统架构
+
+完整架构图见 [README.md 系统架构章节](README.md#系统架构)。
 
 ## 核心组件说明
 
@@ -62,7 +66,7 @@ open-xiaoai/
 ### 4. OpenClawManager (openclaw.py)
 OpenClaw 网关客户端：
 - WebSocket 连接到 OpenClaw Gateway
-- `session_key`: 指定 OpenClaw session（默认 "main"）
+- `session_key`: 指定 OpenClaw session（默认 "main"），只从 config.py 读取
 - `send_message()`: 发送消息触发 AI 处理
 
 **连接参数限制**:
@@ -109,10 +113,13 @@ APP_CONFIG = {
     "openclaw": {
         "url": "ws://localhost:18789",
         "token": "",                  # OpenClaw 认证令牌
-        "session_key": "main",        # OpenClaw session 标识
+        "session_key": "main",        # OpenClaw session 标识（仅从 config.py 读取）
         "tts_enabled": False,         # 启用 Doubao TTS 播放 OpenClaw 回复
-        "blocking_playback": True,    # TTS 播放是否阻塞等待完成
-        # "tts_speaker": "...",       # 可选：自定义音色
+        "blocking_playback": False,   # TTS 播放是否阻塞等待完成（默认非阻塞）
+        "ack_timeout": 30,            # 等待 OpenClaw accepted 回执的超时时间（秒）
+        "response_timeout": 120,      # 等待 Agent 完整回复的超时时间（秒）
+        # "tts_speaker": "...",       # 可选：自定义音色，不设置则使用 tts.doubao.default_speaker
+        # "tts_speed": 1.0,           # 可选：语速（0.5-2.0）
     },
     "tts": {
         "doubao": {
@@ -155,6 +162,13 @@ MainApp.instance(enable_xiaozhi=False)
 # 只启动小爱服务，无 AI 对话功能
 ```
 
+**兼容约定**:
+- 当 `XIAOZHI_ENABLE=0` 时，必须允许跳过 KWS 相关初始化。
+- `core/services/audio/kws/keywords.py` 在仅小爱模式下应直接退出成功，不能因为缺少 `tokens.txt`、`bpe.model` 或 `sherpa_onnx` 依赖导致主程序启动失败。
+- 这里的“跳过”仅指跳过关键词预生成步骤，并继续启动主服务。
+- `start.sh` / `start.bat` 在仅小爱模式下也不应检查、下载或读取 `core/models/` 下的 KWS/VAD 模型文件。
+- 当 `XIAOZHI_ENABLE=1` 时，关键词预生成失败应视为启动失败，不能继续进入主服务。
+
 ### 模式 2: 小智 AI 模式
 ```python
 # 环境变量: XIAOZHI_ENABLE=1
@@ -188,26 +202,24 @@ await app.send_to_openclaw("用户指令")
 
 ## 测试命令
 
-所有命令都在本目录 (`examples/bridge/`) 下执行：
+所有命令都在项目根目录下执行：
 
 ```bash
 # 运行仅小爱模式
-python main.py
+uv run main.py
 
 # 运行小智 AI 模式
-XIAOZHI_ENABLE=1 python main.py
+XIAOZHI_ENABLE=1 uv run main.py
 
 # 运行带 API Server
-API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 python main.py
+API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 uv run main.py
 
 # 启用 OpenClaw
-export OPENCLAW_ENABLED=1
-export OPENCLAW_TOKEN="your_token"
-python main.py
+OPENCLAW_ENABLED=1 uv run main.py
 ```
 
 ## 参考资源
 
-- 项目主页: https://github.com/idootop/open-xiaoai
-- 刷机教程: https://github.com/idootop/open-xiaoai/blob/main/docs/flash.md（从仓库根目录）
-- Client 端: https://github.com/idootop/open-xiaoai/blob/main/packages/client-rust/README.md（从仓库根目录）
+- 项目主页: https://github.com/coderzc/open-xiaoai-bridge
+- 刷机教程: https://github.com/idootop/open-xiaoai/blob/main/docs/flash.md
+- Client 端补丁: https://github.com/idootop/open-xiaoai/blob/main/packages/client-rust/README.md

@@ -9,6 +9,8 @@ echo   Open-XiaoAI Bridge 启动脚本
 echo ========================================
 echo.
 
+set "XIAOZHI_ENABLED=%XIAOZHI_ENABLE%"
+
 REM 1. 检查 uv
 uv --version >nul 2>&1
 if errorlevel 1 (
@@ -20,7 +22,15 @@ if errorlevel 1 (
 )
 echo [OK] uv 已安装
 
-REM 2. 检查并下载模型文件
+REM 2. 检查 KWS 相关模型和关键词文件
+if /I "%XIAOZHI_ENABLED%"=="1" goto :run_kws_setup
+if /I "%XIAOZHI_ENABLED%"=="true" goto :run_kws_setup
+if /I "%XIAOZHI_ENABLED%"=="yes" goto :run_kws_setup
+
+echo [提示] 小智未启用，跳过模型检查和关键词预生成
+goto :after_kws_setup
+
+:run_kws_setup
 set "MODEL_DIR=core\models"
 set "MISSING=0"
 
@@ -65,17 +75,20 @@ if "%MISSING%"=="0" (
     echo [OK] 模型文件下载并解压完成
 )
 
-REM 3. 生成关键词文件
 echo.
 echo [提示] 生成关键词文件...
 python core\services\audio\kws\keywords.py >nul 2>&1
 if errorlevel 1 (
-    echo [提示] 关键词文件生成失败，继续启动...
+    echo [错误] 关键词文件生成失败
+    pause
+    exit /b 1
 ) else (
     echo [OK] 关键词文件生成完成
 )
 
-REM 4. 启动
+:after_kws_setup
+
+REM 3. 启动
 echo.
 echo ========================================
 echo   启动 Open-XiaoAI Bridge...

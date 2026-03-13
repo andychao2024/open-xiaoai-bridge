@@ -16,8 +16,6 @@ from core.xiaozhi import XiaoZhi
 from core.xiaoai import XiaoAI
 from core.event import EventManager
 from core.ref import set_xiaozhi, set_app
-from core.services.audio.kws import KWS
-from core.services.audio.vad import VAD
 from core.utils.config import ConfigManager
 from core.utils.logger import logger
 from core.services.protocols.typing import (
@@ -154,6 +152,8 @@ class MainApp:
 
         # Start audio services (only if XiaoZhi enabled, otherwise managed by XiaoAI)
         if self._enable_xiaozhi:
+            from core.services.audio.vad import VAD
+            from core.services.audio.kws import KWS
             VAD.start()
             KWS.start()
 
@@ -336,7 +336,9 @@ class MainApp:
         """Set device state."""
         self.device_state = state
 
-        VAD.pause()
+        if self._enable_xiaozhi:
+            from core.services.audio.vad import VAD
+            VAD.pause()
         if self.audio_codec:
             self.audio_codec.stop_streams()
 

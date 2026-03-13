@@ -1,6 +1,6 @@
 """OpenClaw integration manager for xiaozhi.
 
-Configuration (priority: env vars > config file > defaults):
+Configuration:
 
     1. config.py:
         APP_CONFIG = {
@@ -16,11 +16,8 @@ Configuration (priority: env vars > config file > defaults):
             }
         }
 
-    2. Environment variables (override config):
+    2. Environment variables:
         export OPENCLAW_ENABLED=1
-        export OPENCLAW_URL=ws://localhost:4399
-        export OPENCLAW_TOKEN=your_token
-        export OPENCLAW_SESSION_KEY=main
 
 Usage:
     from core.openclaw import OpenClawManager
@@ -85,10 +82,9 @@ class OpenClawManager:
     def initialize_from_config(cls, enabled: bool | None = None):
         """Initialize the manager from config.
 
-        Configuration priority (highest first):
-        1. Environment variables (OPENCLAW_*)
-        2. APP_CONFIG["openclaw"]
-        3. Default values
+        Configuration source:
+        1. OPENCLAW_ENABLED environment variable or enabled parameter
+        2. APP_CONFIG["openclaw"] for all OpenClaw connection settings
 
         Args:
             enabled: Override enable flag. If None, use environment variable or config.
@@ -129,9 +125,9 @@ class OpenClawManager:
         cls._ack_timeout = cfg_ack_timeout
         cls._response_timeout = cfg_response_timeout
 
-        cls._url = get_env("OPENCLAW_URL", cfg_url)
-        cls._token = get_env("OPENCLAW_TOKEN", cfg_token)
-        cls._session_key = get_env("OPENCLAW_SESSION_KEY", cfg_session)
+        cls._url = cfg_url
+        cls._token = cfg_token
+        cls._session_key = cfg_session
 
         if cls._enabled:
             logger.info(f"[OpenClaw] Enabled, will connect to {cls._url}")

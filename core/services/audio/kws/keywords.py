@@ -1,6 +1,5 @@
 import re
-
-from sherpa_onnx import text2token
+from pathlib import Path
 
 
 def init_project_context():
@@ -21,6 +20,16 @@ from config import APP_CONFIG
 from core.utils.file import get_model_file_path
 
 
+def should_generate_keywords():
+    """Return whether keyword generation should run."""
+    import os
+
+    if os.environ.get("XIAOZHI_ENABLE", "").lower() not in ("1", "true", "yes"):
+        return False, "XIAOZHI_ENABLE is disabled"
+
+    return True, ""
+
+
 def get_args():
     tokens_type = "cjkchar+bpe"
     tokens = get_model_file_path("tokens.txt")
@@ -32,6 +41,22 @@ def get_args():
 
 
 def main():
+    should_run, reason = should_generate_keywords()
+    if not should_run:
+        print(f"[startup] KWS keyword generation skipped: {reason}")
+        return 0
+
+    required_files = [
+        get_model_file_path("tokens.txt"),
+        get_model_file_path("bpe.model"),
+    ]
+    missing_files = [path for path in required_files if not Path(path).is_file()]
+    if missing_files:
+        print(f"[startup] KWS keyword generation failed: missing model files: {', '.join(missing_files)}")
+        return 1
+
+    from sherpa_onnx import text2token
+
     args = get_args()
     encoded_texts = text2token(
         args["texts"],
@@ -46,7 +71,9 @@ def main():
                 f.write(" ".join(txt) + "\n")
             else:
                 f.write(" ".join(txt) + f" @{line}" + "\n")
+    print(f"[startup] KWS keyword file generated: {args['output']}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

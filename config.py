@@ -17,36 +17,31 @@ async def before_wakeup(speaker, text, source, xiaozhi, xiaoai, app):
     """
     if source == "kws":
         # 播放唤醒提示语
-        await speaker.play(url="http://127.0.0.1:8080/hello.wav")
-
-        # 给小智发送打招呼消息
-        # await xiaozhi.send_text("小智在吗")
-        # # 等待小智服务器回复（延长到 5 秒）
-        # time.sleep(5)
-
+        await speaker.play(text="小智来了")
+        # 唤醒小智 AI
         return True
 
     if source == "xiaoai":
         if text == "召唤小智":
-            # 打断原来的小爱同学
+            # 打断原来的小爱同学回复
             await speaker.abort_xiaoai()
-            # 停止连续对话
-            xiaoai.stop_conversation()
-            # 等待 2 秒，让小爱 TTS 恢复可用
-            time.sleep(2)
-            # 播放唤醒提示语（如果你不使用自带的小爱 TTS，可以去掉上面的延时）
-            await speaker.play(url="http://127.0.0.1:8080/hello.wav")
             # 唤醒小智 AI
             return True
+    if source == "xiaoai":
         if "小白" in text:
-            forwarded_text = text.split("小白", 1)[1]
-            # 打断原来的小爱同学
+            # 打断原来的小爱同学回复
             await speaker.abort_xiaoai()
+            
+            forwarded_text = text.split("小白", 1)[1].replace("让他", "", 1).strip()
+
+            # 在消息末尾加入提示，引导 Agent 调用 xiaoai-tts skill 播报结果
+            # 可根据自己的使用场景适当调整提示内容
+            forwarded_text += "\n\n注意：这条消息是主人通过小爱音箱发送的，他看不到你回复的文字，请调用 skills/xiaoai-tts 将结果读出来。"
+
             success = await app.send_to_openclaw(forwarded_text)
             if not success:
-               # 等待 2 秒，让小爱 TTS 恢复可用
-               time.sleep(2)
-               await speaker.play(text="小白未在线")
+                import time; time.sleep(2)
+                await speaker.play(text="小白未在线")
             return False
             
 
@@ -62,10 +57,7 @@ APP_CONFIG = {
         "keywords": [
             "你好小智",
             "小智小智",
-            "贾维斯"
-            "hi 贾维斯"
-            "嘿 贾维斯"
-            "你好贾维斯"
+            "hi siri"
         ],
         # 静音多久后自动退出唤醒（秒）
         "timeout": 20,
@@ -111,9 +103,14 @@ APP_CONFIG = {
     "openclaw": {
         "url": "ws://127.0.0.1:18789",  # OpenClaw WebSocket 地址
         "token": "",  # OpenClaw 认证令牌
-        "session_key": "main", # 会话标识
-        "tts_enabled": False,  # 是否启用 TTS 播放回复
+        "session_key": "main:open-xiaoai-bridge", # 会话标识
+        # 推荐做法：将 tts_enabled 设为 False，在 OpenClaw 中注册 skills/xiaoai-tts skill，
+        # 由 Agent 自主调用，可灵活控制音色、语速、情感等参数
+        # 如果不想在 OpenClaw 中注册 skill，也可以将 tts_enabled 设为 True，
+        # 由服务端自动合成语音，但灵活性不如 Agent 主动调用
+        "tts_enabled": False,  # 是否由服务端自动 TTS 播报 OpenClaw 回复
         "tts_speed": 1.0,  # TTS 语速 (0.5-2.0, 1.0 为正常语速)
+        "tts_speaker": "zh_female_cancan_mars_bigtts",  # 可选：自定义音色，不设置则使用 tts.doubao.default_speaker
         "response_timeout": 120,  # 等待 OpenClaw agent 响应的超时时间（秒）
     },
 }
