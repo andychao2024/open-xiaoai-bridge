@@ -9,6 +9,7 @@ Configuration:
                 "url": "ws://localhost:4399",
                 "token": "your_token",
                 "session_key": "main",
+                "identity_path": "/data/openclaw/device.json",
                 "tts_enabled": False,  # Enable Doubao TTS to play OpenClaw responses
                 "blocking_playback": False,  # Non-blocking by default
                 "ack_timeout": 30,  # Seconds to wait for accepted ack
@@ -25,11 +26,17 @@ Usage:
 """
 
 import asyncio
+import base64
+import hashlib
 import json
+import os
+import time
 import uuid
 from typing import Optional
 
 import websockets
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from core.utils.base import get_env
 from core.utils.logger import logger
@@ -46,6 +53,7 @@ class OpenClawManager:
     _connected = False
     _receiver_task = None
     _pending: dict[str, asyncio.Future] = {}
+    _connect_nonce_future: asyncio.Future | None = None
 
     # Heartbeat (using OpenClaw tick events + WebSocket built-in ping/pong)
     _heartbeat_task = None
@@ -78,6 +86,9 @@ class OpenClawManager:
     _response_timeout = 120  # seconds to wait for agent response (configurable)
     _ack_timeout = 60  # seconds to wait for request accepted response
 
+    _identity_path = os.path.expanduser("~/.openclaw/identity/device.json")
+    _spki_ed25519_prefix = bytes.fromhex("302a300506032b6570032100")
+
     @classmethod
     def initialize_from_config(cls, enabled: bool | None = None):
         """Initialize the manager from config.
@@ -100,6 +111,7 @@ class OpenClawManager:
         cfg_url = config.get("url", "ws://localhost:4399")
         cfg_token = config.get("token", "")
         cfg_session = config.get("session_key", "main")
+        cfg_identity_path = config.get("identity_path")
         cfg_tts_enabled = config.get("tts_enabled", False)
         cfg_blocking_playback = config.get("blocking_playback", False)
         cfg_tts_speaker = config.get("tts_speaker", None)
@@ -128,9 +140,11 @@ class OpenClawManager:
         cls._url = cfg_url
         cls._token = cfg_token
         cls._session_key = cfg_session
+        cls._identity_path = cls._resolve_identity_path(cfg_identity_path)
 
         if cls._enabled:
             logger.info(f"[OpenClaw] Enabled, will connect to {cls._url}")
+            logger.info(f"[OpenClaw] Device identity path: {cls._identity_path}")
             if cls._tts_enabled:
                 mode = "blocking" if cls._blocking_playback else "non-blocking"
                 logger.info(f"[OpenClaw] TTS playback enabled ({mode} mode) - OpenClaw responses will be played via Doubao TTS")
@@ -141,6 +155,126 @@ class OpenClawManager:
     def initialize(cls, enabled: bool | None = None):
         """Deprecated: Use initialize_from_config instead."""
         cls.initialize_from_config(enabled=enabled)
+
+    @classmethod
+    def _base64url_encode(cls, raw: bytes) -> str:
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    @classmethod
+    def _normalize_metadata_for_auth(cls, value: Optional[str]) -> str:
+        if not isinstance(value, str):
+            return ""
+        return value.strip().lower()
+
+    @classmethod
+    def _resolve_identity_path(cls, configured_path: Optional[str]) -> str:
+        env_path = get_env("OPENCLAW_DEVICE_IDENTITY_PATH")
+        chosen = env_path if env_path else configured_path
+        if not chosen:
+            return os.path.expanduser("~/.openclaw/identity/device.json")
+        return os.path.expanduser(chosen)
+
+    @classmethod
+    def _load_or_create_device_identity(cls) -> dict:
+        path = cls._identity_path
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    parsed = json.load(f)
+                if (
+                    isinstance(parsed, dict)
+                    and parsed.get("version") == 1
+                    and isinstance(parsed.get("deviceId"), str)
+                    and isinstance(parsed.get("publicKeyPem"), str)
+                    and isinstance(parsed.get("privateKeyPem"), str)
+                ):
+                    return parsed
+        except Exception as e:
+            logger.warning(f"[OpenClaw] Failed loading device identity, regenerating: {e}")
+
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key()
+        private_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode("utf-8")
+        public_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("utf-8")
+        spki_der = public_key.public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        raw = (
+            spki_der[len(cls._spki_ed25519_prefix) :]
+            if spki_der.startswith(cls._spki_ed25519_prefix)
+            and len(spki_der) == len(cls._spki_ed25519_prefix) + 32
+            else spki_der
+        )
+        device_id = hashlib.sha256(raw).hexdigest()
+        stored = {
+            "version": 1,
+            "deviceId": device_id,
+            "publicKeyPem": public_pem,
+            "privateKeyPem": private_pem,
+            "createdAtMs": int(time.time() * 1000),
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(stored, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            pass
+        return stored
+
+    @classmethod
+    def _build_device_signature(cls, *, token: str, nonce: str, scopes: list[str], client: dict) -> dict:
+        identity = cls._load_or_create_device_identity()
+        private_key = serialization.load_pem_private_key(
+            identity["privateKeyPem"].encode("utf-8"),
+            password=None,
+        )
+        public_key = serialization.load_pem_public_key(identity["publicKeyPem"].encode("utf-8"))
+        spki_der = public_key.public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        public_key_raw = (
+            spki_der[len(cls._spki_ed25519_prefix) :]
+            if spki_der.startswith(cls._spki_ed25519_prefix)
+            and len(spki_der) == len(cls._spki_ed25519_prefix) + 32
+            else spki_der
+        )
+        signed_at_ms = int(time.time() * 1000)
+        platform = cls._normalize_metadata_for_auth(client.get("platform"))
+        device_family = cls._normalize_metadata_for_auth(client.get("deviceFamily"))
+        payload = "|".join(
+            [
+                "v3",
+                identity["deviceId"],
+                client.get("id") or "",
+                client.get("mode") or "",
+                "operator",
+                ",".join(scopes),
+                str(signed_at_ms),
+                token or "",
+                nonce,
+                platform,
+                device_family,
+            ]
+        )
+        signature = private_key.sign(payload.encode("utf-8"))
+        return {
+            "id": identity["deviceId"],
+            "publicKey": cls._base64url_encode(public_key_raw),
+            "signature": cls._base64url_encode(signature),
+            "signedAt": signed_at_ms,
+            "nonce": nonce,
+        }
 
     @classmethod
     async def connect(cls) -> bool:
@@ -158,29 +292,54 @@ class OpenClawManager:
             logger.info(f"[OpenClaw] Connecting to {cls._url}...")
             cls._websocket = await websockets.connect(cls._url)
             logger.info(f"[OpenClaw] WebSocket connected, sending handshake...")
+            cls._connect_nonce_future = asyncio.get_running_loop().create_future()
             cls._receiver_task = asyncio.create_task(cls._receiver())
+
+            nonce: str | None = None
+            try:
+                nonce = await asyncio.wait_for(cls._connect_nonce_future, timeout=5)
+            except asyncio.TimeoutError:
+                logger.warning("[OpenClaw] connect.challenge nonce wait timed out; continuing without device auth")
+
+            client_meta = {
+                "id": "gateway-client",
+                "displayName": "Xiaoai Bridge",
+                "version": "1.0.0",
+                "platform": "python",
+                "mode": "backend",
+                "instanceId": f"xiaoai-{uuid.uuid4().hex[:8]}",
+            }
+
+            scopes = ["operator.read", "operator.write"]
+            device_payload = (
+                cls._build_device_signature(
+                    token=cls._token or "",
+                    nonce=nonce,
+                    scopes=scopes,
+                    client=client_meta,
+                )
+                if nonce
+                else None
+            )
+
+            connect_params = {
+                "minProtocol": 3,
+                "maxProtocol": 3,
+                "client": client_meta,
+                "locale": "zh-CN",
+                "userAgent": "xiaoai-bridge/1.0.0",
+                "role": "operator",
+                "scopes": scopes,
+                "caps": [],
+                "auth": {"token": cls._token},
+            }
+            if device_payload:
+                connect_params["device"] = device_payload
 
             # Send connect request
             res = await cls._request(
                 "connect",
-                {
-                    "minProtocol": 3,
-                    "maxProtocol": 3,
-                    "client": {
-                        "id": "gateway-client",
-                        "displayName": "Xiaoai Bridge",
-                        "version": "1.0.0",
-                        "platform": "python",
-                        "mode": "backend",
-                        "instanceId": f"xiaoai-{uuid.uuid4().hex[:8]}",
-                    },
-                    "locale": "zh-CN",
-                    "userAgent": "xiaoai-bridge/1.0.0",
-                    "role": "operator",
-                    "scopes": ["operator.read", "operator.write"],
-                    "caps": [],
-                    "auth": {"token": cls._token},
-                },
+                connect_params,
                 timeout=10,
             )
 
@@ -188,6 +347,7 @@ class OpenClawManager:
                 cls._connected = True
                 cls._should_reconnect = True
                 cls._reconnect_attempts = 0
+                cls._connect_nonce_future = None
                 cls._last_tick_time = asyncio.get_event_loop().time()
                 logger.info(f"[OpenClaw] Connected to {cls._url}")
                 # Start heartbeat monitor task
@@ -196,6 +356,7 @@ class OpenClawManager:
             else:
                 error = (res.get("error") or {}).get("message") or "connect failed"
                 logger.error(f"[OpenClaw] Connection failed: {error}")
+                cls._connect_nonce_future = None
                 cls._trigger_reconnect()
                 return False
 
@@ -205,6 +366,7 @@ class OpenClawManager:
             logger.debug(f"[OpenClaw] Connection error traceback: {traceback.format_exc()}")
             cls._connected = False
             cls._websocket = None
+            cls._connect_nonce_future = None
             cls._trigger_reconnect()
             return False
 
@@ -213,6 +375,7 @@ class OpenClawManager:
         """Close the connection."""
         cls._should_reconnect = False
         cls._connected = False
+        cls._connect_nonce_future = None
         # Cancel reconnect task
         if cls._reconnect_task:
             cls._reconnect_task.cancel()
@@ -419,7 +582,12 @@ class OpenClawManager:
                     if msg_type == "event":
                         event_name = data.get("event", "")
                         logger.debug(f"[OpenClaw] Received event: {event_name}")
-                        if event_name == "tick":
+                        if event_name == "connect.challenge":
+                            nonce = ((data.get("payload") or {}).get("nonce") or "").strip()
+                            if nonce and cls._connect_nonce_future and not cls._connect_nonce_future.done():
+                                cls._connect_nonce_future.set_result(nonce)
+                                logger.debug("[OpenClaw] connect.challenge nonce received")
+                        elif event_name == "tick":
                             logger.debug("[OpenClaw] Tick event received")
                         # Handle agent response events for TTS playback
                         elif event_name in ("run.completed", "run.output", "run.text", "agent"):

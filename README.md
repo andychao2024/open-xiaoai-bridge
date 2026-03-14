@@ -276,9 +276,10 @@ OpenClaw 收到消息后，可以通过两种方式回复语音：
 ```python
 APP_CONFIG = {
     "openclaw": {
-        "url": "ws://localhost:18789",  # OpenClaw WebSocket 地址
+        "url": "ws://127.0.0.1:18789",  # OpenClaw WebSocket 地址
         "token": "",  # 认证令牌（如果需要）
         "session_key": "main",  # 会话标识
+        "identity_path": "/data/openclaw/device.json",  # 设备身份文件路径（容器部署建议持久化）
         "tts_enabled": False,  # 启用 Doubao TTS 播放 OpenClaw 回复
         "blocking_playback": False,  # TTS 播放是否阻塞等待完成 (默认 False)
         "ack_timeout": 30,  # 发送消息时等待 OpenClaw accepted 回执的超时时间（秒）
@@ -291,6 +292,22 @@ APP_CONFIG = {
 
 ```bash
 OPENCLAW_ENABLED=1 uv run main.py
+```
+
+**容器部署注意：**
+
+1. 请将 `identity_path` 对应的目录挂载为持久化卷，否则容器重建后会生成新的设备身份，可能需要重新配对。
+
+```yaml
+# docker-compose.yml
+volumes:
+  - ./data/openclaw:/data/openclaw
+```
+
+2. 首次启动时，OpenClaw 会把这个客户端识别为一个待配对设备。请到 OpenClaw UI 中手动批准：
+
+```text
+Nodes -> Devices -> 找到对应设备 -> Approve
 ```
 
 ### 在 before_wakeup 中使用
@@ -435,9 +452,10 @@ curl -X POST http://localhost:9092/api/play/text \
 ```python
 APP_CONFIG = {
     "openclaw": {
-        "url": "ws://localhost:18789",
+        "url": "ws://127.0.0.1:18789",
         "token": "your_token",  # 如果 OpenClaw 需要认证
         "session_key": "main",
+        "identity_path": "/data/openclaw/device.json",
     },
 }
 ```
@@ -447,6 +465,18 @@ APP_CONFIG = {
 ```bash
 OPENCLAW_ENABLED=1 python main.py
 ```
+
+容器部署时请同时挂载 `identity_path` 对应的目录，避免设备身份在容器重建后丢失。
+
+#### Q：第一次连接 OpenClaw 出现 `pairing required` 怎么办？
+
+这是正常的首次设备配对流程。保持 `open-xiaoai-bridge` 在线，然后到 OpenClaw UI 批准这台设备：
+
+```text
+Nodes -> Devices -> 找到对应设备 -> Approve
+```
+
+如果容器部署使用了 `identity_path`，记得把该目录挂载为持久化卷；否则容器重建后可能会被识别为一台新设备，需要再次批准。
 
 #### Q：如何通过 OpenClaw 发送指令？
 
