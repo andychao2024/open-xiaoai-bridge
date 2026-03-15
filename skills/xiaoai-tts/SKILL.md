@@ -1,6 +1,6 @@
 ---
 name: xiaoai-tts
-description: Control Xiaoai speaker via OpenXiaoAI Voice API for high-quality TTS playback. Use when the user wants to play voice notifications, announcements, or TTS through the Xiaoai speaker using the OpenXiaoAI HTTP API. Supports Doubao (ByteDance) TTS with emotions, voice types, and speed control. Triggers on queries like "小爱播报", "语音播报", "让小爱说", "读出来", "播报"， "xiaoai-tts".
+description: Control Xiaoai speaker via OpenXiaoAI Voice API for high-quality TTS playback. Use when the user wants to play voice notifications, announcements, or TTS through the Xiaoai speaker using the OpenXiaoAI HTTP API. Supports Doubao (ByteDance) TTS with emotions, voice types, and speed control. Triggers on queries like "小爱播报", "语音播报", "让小爱说", "读出来", "播报"， "xiaoai-tts"，"tts", "TTS", "小爱音箱语音播报".
 ---
 
 # XiaoAI TTS
