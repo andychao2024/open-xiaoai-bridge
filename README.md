@@ -102,7 +102,7 @@ flowchart TB
 
     %% ===== API 客户端 =====
     APIServer <-->|"HTTP"| Curl
-    OpenclawGW -.->|"Agent 调用（推荐）"| XiaoaiTTS
+    OpenclawGW -.->|"Agent 调用"| XiaoaiTTS
     XiaoaiTTS -->|"HTTP"| APIServer
 
     %% 样式
@@ -336,8 +336,6 @@ Nodes -> Devices -> 找到对应设备 -> Approve
 
 编辑 `config.py`，通过 `app.send_to_openclaw()` 发送消息。
 
-**推荐：让 Agent 调用 `xiaoai-tts` skill 播报回复**（Agent 可自由选择音色、语速、情感）：
-
 ```python
 async def before_wakeup(speaker, text, source, xiaozhi, xiaoai, app):
     if source == "xiaoai":
@@ -476,7 +474,7 @@ APP_CONFIG = {
     "openclaw": {
         "url": "ws://127.0.0.1:18789",
         "token": "your_token",  # 如果 OpenClaw 需要认证
-        "session_key": "main",
+        "session_key": "agent:main:open-xiaoai-bridge",
         "identity_path": "~/.openclaw/identity/device.json",
     },
 }
@@ -522,7 +520,7 @@ APP_CONFIG = {
     "openclaw": {
         "url": "ws://localhost:18789",
         "token": "your_token",
-        "session_key": "main",
+        "session_key": "agent:main:open-xiaoai-bridge",
         "tts_enabled": True,  # 启用 TTS 播放回复
     },
     "tts": {
@@ -609,12 +607,6 @@ APP_CONFIG = {
 #### Q：`session_key` 是什么，怎么填？
 
 `session_key` 用于告诉 OpenClaw Gateway 把消息路由到哪个 Agent 会话，对应 OpenClaw 中配置的 session 标识。填写你在 OpenClaw 中创建的 session key 即可，默认值 `"main"` 对应默认会话。
-
-#### Q：Agent 调用 `xiaoai-tts` skill 和服务端 `tts_enabled` 有什么区别，哪个更推荐？
-
-推荐让 Agent 调用 `xiaoai-tts` skill，灵活性更高：Agent 可以自由选择音色、语速、情感，还可以决定是否播放、播放哪段内容。
-
-`tts_enabled: True` 是服务端自动合成方案，配置简单，但只能使用固定音色，无法让 Agent 控制播报内容。
 
 #### Q：TTS 合成支持流式播放吗？
 
