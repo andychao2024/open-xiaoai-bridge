@@ -10,8 +10,9 @@ import os
 import open_xiaoai_server
 from aiohttp import web
 from core.ref import get_speaker, get_xiaoai
-from core.utils.logger import logger
 from core.services.tts.doubao import DoubaoTTS
+from core.utils.config import ConfigManager
+from core.utils.logger import logger
 
 
 class APIServer:
@@ -20,6 +21,7 @@ class APIServer:
     def __init__(self, host: str = "0.0.0.0", port: int = 8080):
         self.host = host
         self.port = port
+        self.config = ConfigManager.instance()
         self.app = web.Application()
         self.runner = None
         self.site = None
@@ -415,8 +417,7 @@ class APIServer:
                 )
 
             # Get credentials from request or config
-            from config import APP_CONFIG
-            tts_config = APP_CONFIG.get("tts", {}).get("doubao", {})
+            tts_config = self.config.get_app_config("tts.doubao", {})
 
             app_id = data.get("app_id") or tts_config.get("app_id")
             access_key = data.get("access_key") or tts_config.get("access_key")
@@ -536,8 +537,7 @@ class APIServer:
             - version: "1.0", "2.0", or "all" (optional, default shows all)
         """
         try:
-            from config import APP_CONFIG
-            tts_config = APP_CONFIG.get("tts", {}).get("doubao", {})
+            tts_config = self.config.get_app_config("tts.doubao", {})
             resource_id = tts_config.get("resource_id", "")
 
             # Get version from query param or auto-detect from resource_id

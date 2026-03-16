@@ -39,6 +39,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from core.utils.base import get_env
+from core.utils.config import ConfigManager
 from core.utils.logger import logger
 
 
@@ -47,6 +48,7 @@ class OpenClawManager:
 
     _instance = None
     _initialized = False
+    _reload_listener_registered = False
 
     # Connection
     _websocket = None
@@ -101,13 +103,24 @@ class OpenClawManager:
             enabled: Override enable flag. If None, use environment variable or config.
         """
         logger.info("[OpenClaw] Initializing from config...")
-        if cls._initialized:
-            return
+        cls.reload_from_config(enabled=enabled)
+        cls._initialized = True
 
-        from config import APP_CONFIG
+    @classmethod
+    def reload_from_config(cls, enabled: bool | None = None):
+        """从配置中心刷新 OpenClaw 配置。"""
+        config_manager = ConfigManager.instance()
+        previous_url = cls._url
+        previous_token = cls._token
+        previous_session_key = cls._session_key
 
-        # Get config from APP_CONFIG with defaults
-        config = APP_CONFIG.get("openclaw", {})
+        if not cls._reload_listener_registered:
+            config_manager.add_reload_listener(
+                lambda _old, _new: cls.reload_from_config()
+            )
+            cls._reload_listener_registered = True
+
+        config = config_manager.get_app_config("openclaw", {})
         cfg_url = config.get("url", "ws://localhost:4399")
         cfg_token = config.get("token", "")
         cfg_session = config.get("session_key", "main")
@@ -149,7 +162,25 @@ class OpenClawManager:
                 mode = "blocking" if cls._blocking_playback else "non-blocking"
                 logger.info(f"[OpenClaw] TTS playback enabled ({mode} mode) - OpenClaw responses will be played via Doubao TTS")
 
-        cls._initialized = True
+        should_reconnect = cls._connected and (
+            previous_url != cls._url
+            or previous_token != cls._token
+            or previous_session_key != cls._session_key
+        )
+        if should_reconnect:
+            logger.info("[OpenClaw] Runtime config changed, reconnecting with new settings")
+            try:
+                from core.ref import get_app
+
+                app = get_app()
+                if app and app.loop and app.loop.is_running():
+                    async def reconnect():
+                        await cls.close()
+                        await cls.connect()
+
+                    asyncio.run_coroutine_threadsafe(reconnect(), app.loop)
+            except Exception as exc:
+                logger.warning(f"[OpenClaw] Failed to reconnect after config reload: {exc}")
 
     @classmethod
     def initialize(cls, enabled: bool | None = None):
@@ -851,12 +882,11 @@ class OpenClawManager:
     async def _play_response_with_tts(cls, text: str):
         """Synthesize text using Doubao TTS and play through speaker."""
         try:
-            from config import APP_CONFIG
             from core.ref import get_speaker
             from core.services.tts.doubao import DoubaoTTS
 
             # Get TTS config
-            tts_config = APP_CONFIG.get("tts", {}).get("doubao", {})
+            tts_config = ConfigManager.instance().get_app_config("tts.doubao", {})
             app_id = tts_config.get("app_id")
             access_key = tts_config.get("access_key")
 

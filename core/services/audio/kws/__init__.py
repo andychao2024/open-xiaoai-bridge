@@ -1,10 +1,8 @@
 import asyncio
 import os
-from re import L
 import threading
 import time
 
-from config import APP_CONFIG
 from core.event import EventManager
 from core.ref import get_speaker, get_xiaoai, get_xiaozhi, set_kws
 from core.services.audio.kws.sherpa import SherpaOnnx
@@ -12,16 +10,15 @@ from core.services.audio.stream import MyAudio
 from core.services.audio.vad.silero import Silero
 from core.services.protocols.typing import AudioConfig, DeviceState
 from core.utils.base import get_env
+from core.utils.config import ConfigManager
 from core.utils.logger import logger
 
 
 class _KWS:
     def __init__(self):
         set_kws(self)
-        
-        # VAD 参数配置
-        config = APP_CONFIG.get("vad", {})
-        self.vad_threshold = config.get("threshold", 0.10)
+        self.config_manager = ConfigManager.instance()
+        self.vad_threshold = 0.10
         
         # VAD 状态变量
         self.vad_active = False
@@ -34,6 +31,19 @@ class _KWS:
         self.frame_size = 512
         self.sample_rate = 16000
         self.frame_duration_ms = (self.frame_size * 1000) / self.sample_rate  # 32ms per frame
+
+        self.apply_runtime_config()
+        self.config_manager.add_reload_listener(self._on_config_reload)
+
+    def apply_runtime_config(self):
+        """同步最新 KWS 相关配置。"""
+        config = self.config_manager.get_app_config("vad", {})
+        self.vad_threshold = config.get("threshold", 0.10)
+
+    def _on_config_reload(self, *_args):
+        """配置重载后刷新运行时参数。"""
+        self.apply_runtime_config()
+
     def start(self):
         if not get_env("CLI"):
             return

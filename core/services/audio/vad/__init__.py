@@ -1,28 +1,27 @@
 import threading
 import time
 
-from config import APP_CONFIG
 from core.event import EventManager
 from core.ref import set_vad
 from core.services.audio.stream import MyAudio
 from core.services.audio.vad.silero import Silero
 from core.services.protocols.typing import AudioConfig
 from core.utils.base import get_env
+from core.utils.config import ConfigManager
 from core.utils.logger import logger
 
 
 class _VAD:
     def __init__(self):
         set_vad(self)
-
-        config = APP_CONFIG.get("vad", {})
+        self.config_manager = ConfigManager.instance()
 
         # 参数设置
         self.sample_rate = 16000
         self.frame_size = 512
-        self.threshold = config.get("threshold", 0.01)
-        self.min_speech_duration = config.get("min_speech_duration", 250)
-        self.min_silence_duration = config.get("min_silence_duration", 500)
+        self.threshold = 0.01
+        self.min_speech_duration = 250
+        self.min_silence_duration = 500
 
         # 状态变量
         self.paused = True
@@ -37,6 +36,20 @@ class _VAD:
         self.silence_frames = []  # 静音片段
         self.speech_frames = []  # 语音片段
         self.target = None  # 检测目标 speech/silence
+
+        self.apply_runtime_config()
+        self.config_manager.add_reload_listener(self._on_config_reload)
+
+    def apply_runtime_config(self):
+        """同步最新 VAD 配置。"""
+        config = self.config_manager.get_app_config("vad", {})
+        self.threshold = config.get("threshold", 0.01)
+        self.min_speech_duration = config.get("min_speech_duration", 250)
+        self.min_silence_duration = config.get("min_silence_duration", 500)
+
+    def _on_config_reload(self, *_args):
+        """配置重载后刷新运行时参数。"""
+        self.apply_runtime_config()
 
     def _reset_state(self):
         """重置状态"""

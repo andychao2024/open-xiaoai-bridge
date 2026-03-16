@@ -4,6 +4,8 @@ Doubao (ByteDance Volcano Engine) TTS Service
 
 import json
 
+from core.utils.config import ConfigManager
+
 
 class DoubaoTTS:
     """豆包语音合成服务 (字节跳动火山引擎)"""
@@ -436,6 +438,7 @@ class DoubaoTTS:
 
     # 合并所有音色
     VOICES = {**VOICES_1_0, **VOICES_2_0}
+    config_manager = ConfigManager.instance()
 
     def __init__(
         self,
@@ -455,17 +458,18 @@ class DoubaoTTS:
         # Get audio format from config or use default
         if audio_format is None:
             try:
-                from config import APP_CONFIG
-                audio_format = APP_CONFIG.get("tts", {}).get("doubao", {}).get("audio_format", "mp3")
+                audio_format = self.config_manager.get_app_config(
+                    "tts.doubao.audio_format", "mp3"
+                )
             except Exception:
                 audio_format = "mp3"
         self.audio_format = audio_format
         try:
-            from config import APP_CONFIG
-            self.auto_pcm_max_chars = (
-                APP_CONFIG.get("tts", {})
-                .get("doubao", {})
-                .get("auto_pcm_max_chars", self.DEFAULT_AUTO_PCM_MAX_CHARS)
+            self.auto_pcm_max_chars = int(
+                self.config_manager.get_app_config(
+                    "tts.doubao.auto_pcm_max_chars",
+                    self.DEFAULT_AUTO_PCM_MAX_CHARS,
+                )
             )
         except Exception:
             self.auto_pcm_max_chars = self.DEFAULT_AUTO_PCM_MAX_CHARS

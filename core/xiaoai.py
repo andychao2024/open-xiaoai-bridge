@@ -5,12 +5,12 @@ import time
 import numpy as np
 import open_xiaoai_server
 
-from config import APP_CONFIG
 from core.event import EventManager
 from core.ref import get_speaker, set_xiaoai
 from core.services.audio.stream import GlobalStream
 from core.services.speaker import SpeakerManager
 from core.utils.base import json_decode
+from core.utils.config import ConfigManager
 from core.utils.logger import logger
 
 ASCII_BANNER = """
@@ -26,18 +26,28 @@ v1.0.0  by: https://del.wang
 class XiaoAI:
     speaker = SpeakerManager()
     async_loop: asyncio.AbstractEventLoop = None
+    config_manager = ConfigManager.instance()
 
-    config = APP_CONFIG.get("xiaoai", {})
-
-    continuous_conversation_mode = config.get("continuous_conversation_mode", True)
-    max_listening_retries = config.get("max_listening_retries", 2)  # 最多连续重新唤醒次数
-    exit_command_keywords = config.get("exit_command_keywords", ["停止", "退下", "退出", "下去吧"])
-    exit_prompt = config.get("exit_prompt", "再见，主人")
-    # 开启连续对话唤醒词
-    continuous_conversation_keywords = config.get("continuous_conversation_keywords", ["开启连续对话"])
+    continuous_conversation_mode = True
+    max_listening_retries = 2  # 最多连续重新唤醒次数
+    exit_command_keywords = ["停止", "退下", "退出", "下去吧"]
+    exit_prompt = "再见，主人"
+    continuous_conversation_keywords = ["开启连续对话"]
 
     conversing = False # 是否在连续对话中
     current_retries = 0  # 当前重新唤醒次数
+
+    @classmethod
+    def refresh_runtime_config(cls, *_args):
+        """从配置中心同步运行时参数。"""
+        config = cls.config_manager.get_app_config("xiaoai", {})
+        cls.continuous_conversation_mode = config.get("continuous_conversation_mode", True)
+        cls.max_listening_retries = config.get("max_listening_retries", 2)
+        cls.exit_command_keywords = config.get("exit_command_keywords", ["停止", "退下", "退出", "下去吧"])
+        cls.exit_prompt = config.get("exit_prompt", "再见，主人")
+        cls.continuous_conversation_keywords = config.get(
+            "continuous_conversation_keywords", ["开启连续对话"]
+        )
 
     @classmethod
     def on_input_data(cls, data: bytes):
@@ -161,6 +171,8 @@ class XiaoAI:
 
     @classmethod
     async def init_xiaoai(cls):
+        cls.refresh_runtime_config()
+        cls.config_manager.add_reload_listener(cls.refresh_runtime_config)
         set_xiaoai(XiaoAI)
         GlobalStream.on_output_data = cls.on_output_data
         open_xiaoai_server.register_fn("on_input_data", cls.on_input_data)

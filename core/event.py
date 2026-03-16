@@ -1,7 +1,7 @@
 import asyncio
 
-from config import APP_CONFIG
 from core.utils.logger import logger
+from core.utils.config import ConfigManager
 from core.ref import (
     get_app,
     get_audio_codec,
@@ -31,6 +31,7 @@ class __EventManager:
         self.session_id = 0
         self.current_step = Step.idle
         self.next_step_future = None
+        self.config = ConfigManager.instance()
 
     def update_step(self, step: Step, step_data=None):
         if not get_env("CLI"):
@@ -136,13 +137,13 @@ class __EventManager:
         # 检查是否有人说话
         vad.resume("speech")
         step, speech_buffer = await self.wait_next_step(
-            timeout=APP_CONFIG["wakeup"]["timeout"]
+            timeout=self.config.get_app_config("wakeup.timeout", 20)
         )
         if step == "timeout":
             # 如果没人说话，则回到 IDLE 状态
             xiaozhi.set_device_state(DeviceState.IDLE)
             logger.info("👋 已退出唤醒")
-            after_wakeup = APP_CONFIG["wakeup"]["after_wakeup"]
+            after_wakeup = self.config.get_app_config("wakeup.after_wakeup")
             await after_wakeup(speaker)
             return
         if step != Step.on_speech:
@@ -169,7 +170,7 @@ class __EventManager:
         xiaozhi.set_device_state(DeviceState.IDLE)
 
     async def wakeup(self, text, source):
-        before_wakeup = APP_CONFIG["wakeup"]["before_wakeup"]
+        before_wakeup = self.config.get_app_config("wakeup.before_wakeup")
         kws = get_kws()
         if kws:
             kws.pause()  # 暂停 KWS 检测

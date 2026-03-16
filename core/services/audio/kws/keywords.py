@@ -16,7 +16,7 @@ def init_project_context():
 
 init_project_context()
 
-from config import APP_CONFIG
+from core.utils.config import ConfigManager
 from core.utils.file import get_model_file_path
 
 
@@ -31,11 +31,12 @@ def should_generate_keywords():
 
 
 def get_args():
+    config = ConfigManager.instance()
     tokens_type = "cjkchar+bpe"
     tokens = get_model_file_path("tokens.txt")
     bpe_model = get_model_file_path("bpe.model")
     output = get_model_file_path("keywords.txt")
-    keywords = APP_CONFIG["wakeup"]["keywords"]
+    keywords = config.get_app_config("wakeup.keywords", [])
     texts = [f"{keyword.upper()}" for keyword in keywords]
     return locals()
 

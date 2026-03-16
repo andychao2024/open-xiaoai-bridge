@@ -1,12 +1,13 @@
+import importlib
 import re
 import socket
 import threading
 import uuid
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 import requests
 
-from config import APP_CONFIG
 from core.utils.file import read_file, write_file
 
 
@@ -27,12 +28,17 @@ class ConfigManager:
         if hasattr(self, "_initialized"):
             return
         self._initialized = True
+        self._state_lock = threading.RLock()
+        self._reload_listeners: list[Callable[[dict[str, Any], dict[str, Any]], None]] = []
+        self._config_path = Path(__file__).resolve().parents[2] / "config.py"
+        self._config_module_name = "config"
 
-        # 加载配置
+        self._app_config = self._load_app_config()
+
         self._config = {
             "CLIENT_ID": None,
-            "DEVICE_ID": APP_CONFIG["xiaozhi"]["DEVICE_ID"],
-            "NETWORK": APP_CONFIG.get("xiaozhi"),
+            "DEVICE_ID": self.get_app_config("xiaozhi.DEVICE_ID"),
+            "NETWORK": self.get_app_config("xiaozhi", {}),
             "MQTT_INFO": None,
         }
 
@@ -40,43 +46,109 @@ class ConfigManager:
         self._initialize_device_id()
         self._initialize_mqtt_info()
 
+    def _load_app_config(self) -> dict[str, Any]:
+        """加载 config.py 中的 APP_CONFIG。"""
+        module = importlib.import_module(self._config_module_name)
+        app_config = getattr(module, "APP_CONFIG", None)
+        if not isinstance(app_config, dict):
+            raise ValueError("config.APP_CONFIG must be a dict")
+        return app_config
+
+    def get_config_path(self) -> Path:
+        """返回配置文件路径。"""
+        return self._config_path
+
+    def get_app_config(self, path: str | None = None, default: Any = None) -> Any:
+        """获取运行时 APP_CONFIG。"""
+        with self._state_lock:
+            if not path:
+                return self._app_config
+
+            value: Any = self._app_config
+            for key in path.split("."):
+                if not isinstance(value, dict):
+                    return default
+                value = value.get(key, default)
+                if value is default:
+                    return default
+            return value
+
+    def add_reload_listener(
+        self, callback: Callable[[dict[str, Any], dict[str, Any]], None]
+    ) -> None:
+        """注册配置重载监听器。"""
+        with self._state_lock:
+            if callback not in self._reload_listeners:
+                self._reload_listeners.append(callback)
+
+    def reload_app_config(self) -> bool:
+        """重新加载 config.py，并同步运行时配置。"""
+        with self._state_lock:
+            module = importlib.import_module(self._config_module_name)
+            module = importlib.reload(module)
+            next_config = getattr(module, "APP_CONFIG", None)
+            if not isinstance(next_config, dict):
+                raise ValueError("config.APP_CONFIG must be a dict")
+
+            previous_config = self._app_config
+            self._app_config = next_config
+
+            self._config["DEVICE_ID"] = self.get_app_config("xiaozhi.DEVICE_ID")
+            self._config["NETWORK"] = self.get_app_config("xiaozhi", {})
+            self._initialize_device_id()
+
+            listeners = list(self._reload_listeners)
+
+        for listener in listeners:
+            try:
+                listener(previous_config, next_config)
+            except Exception:
+                continue
+
+        return True
+
     def get_client_id(self) -> str:
         """获取客户端ID"""
-        return self._config["CLIENT_ID"]
+        with self._state_lock:
+            return self._config["CLIENT_ID"]
 
     def get_device_id(self) -> Optional[str]:
         """获取设备ID"""
-        return self._config.get("DEVICE_ID")
+        with self._state_lock:
+            return self._config.get("DEVICE_ID")
 
     def get_network_config(self) -> dict:
         """获取网络配置"""
-        return self._config["NETWORK"]
+        with self._state_lock:
+            return self._config["NETWORK"]
 
     def get_config(self, path: str, default: Any = None) -> Any:
         """
         通过路径获取配置值
         """
-        try:
-            value = self._config
-            for key in path.split("."):
-                value = value[key]
-            return value
-        except (KeyError, TypeError):
-            return default
+        with self._state_lock:
+            try:
+                value = self._config
+                for key in path.split("."):
+                    value = value[key]
+                return value
+            except (KeyError, TypeError):
+                return default
 
     def update_config(self, path: str, value: Any) -> bool:
         """
         更新特定配置项
         """
-        try:
-            current = self._config
-            *parts, last = path.split(".")
-            for part in parts:
-                current = current.setdefault(part, {})
-            current[last] = value
-            return True
-        except Exception:
-            return False
+        with self._state_lock:
+            try:
+                current = self._config
+                *parts, last = path.split(".")
+                for part in parts:
+                    current = current.setdefault(part, {})
+                current[last] = value
+                return True
+            except Exception:
+                return False
 
     def update_config_file(self, path: str, value: Any):
         """

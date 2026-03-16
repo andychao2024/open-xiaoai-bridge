@@ -54,6 +54,12 @@ class WebsocketProtocol(Protocol):
         """连接到WebSocket服务器"""
         try:
             await self._close_websocket()
+            self.WEBSOCKET_URL = self.config.get_config("NETWORK.WEBSOCKET_URL")
+            self.WEBSOCKET_ACCESS_TOKEN = self.config.get_config(
+                "NETWORK.WEBSOCKET_ACCESS_TOKEN"
+            )
+            self.CLIENT_ID = self.config.get_client_id()
+            self.DEVICE_ID = self.config.get_device_id()
 
             # 在连接时创建 Event，确保在正确的事件循环中
             self.hello_received = asyncio.Event()
