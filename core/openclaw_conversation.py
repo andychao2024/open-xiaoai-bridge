@@ -105,13 +105,11 @@ class OpenClawConversationController:
         """Run VAD -> ASR -> OpenClaw -> TTS turns until exit."""
         vad = get_vad()
 
-        # Wait for any ongoing playback (e.g. before_wakeup "我在") to finish
-        # before starting the first listening round.
+        # Play notify sound first for immediate user feedback,
+        # then wait for silence so VAD/ASR starts from a clean state.
+        await self._play_notify()
         if vad:
             await self._wait_for_silence(vad)
-
-        # Play notify sound once to signal the first listening round is ready.
-        await self._play_notify()
 
         while self.active:
             result = await self._run_one_turn()

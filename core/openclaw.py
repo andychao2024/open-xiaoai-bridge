@@ -925,8 +925,8 @@ class OpenClawManager:
                         sample_rate=24000,
                     )
                     logger.debug("[OpenClaw] TTS stream playback completed")
-                except Exception as e:
-                    logger.error(f"[OpenClaw] TTS stream error: {e}")
+                except Exception:
+                    raise
             else:
                 import open_xiaoai_server
 
