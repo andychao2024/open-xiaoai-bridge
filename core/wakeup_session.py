@@ -338,7 +338,7 @@ class WakeupSessionManager:
         self._clear_pending_step()
         self.update_step(WakeupStep.on_interrupt)
 
-        logger.info("[Wakeup] All sessions reset")
+        logger.debug("[Wakeup] All sessions reset")
 
 
 EventManager = WakeupSessionManager()
