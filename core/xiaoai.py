@@ -28,6 +28,8 @@ class XiaoAI:
     config_manager = ConfigManager.instance()
     conversation = XiaoAIConversationController()
     _async_loop_ready = threading.Event()
+    _external_wakeup_keywords: set[str] = set()
+    _suppressed_dialog_ids: set[str] = set()
 
     @classmethod
     def refresh_runtime_config(cls, *_args):
@@ -35,6 +37,43 @@ class XiaoAI:
         cls.conversation.apply_runtime_config(
             cls.config_manager.get_app_config("xiaoai", {})
         )
+        wakeup_keywords = cls.config_manager.get_app_config("wakeup.keywords", [])
+        cls._external_wakeup_keywords = {
+            cls._normalize_text(keyword)
+            for keyword in wakeup_keywords
+            if isinstance(keyword, str) and cls._normalize_text(keyword)
+        }
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        if not isinstance(text, str):
+            return ""
+        return "".join(text.strip().lower().split())
+
+    @classmethod
+    def _is_external_wakeup_text(cls, text: str) -> bool:
+        normalized = cls._normalize_text(text)
+        return bool(normalized) and normalized in cls._external_wakeup_keywords
+
+    @classmethod
+    async def _suppress_dialog(cls, dialog_id: str, reason: str):
+        if not dialog_id:
+            return
+
+        is_new_dialog = dialog_id not in cls._suppressed_dialog_ids
+        cls._suppressed_dialog_ids.add(dialog_id)
+
+        if is_new_dialog:
+            logger.info(
+                f"[XiaoAI] 🛑 小爱被其他唤醒词打断退出: {reason}"
+            )
+
+        try:
+            await cls.speaker.run_shell("mphelper pause")
+        except Exception as exc:
+            logger.debug(
+                f"[XiaoAI] Failed to pause suppressed dialog {dialog_id}: {exc}"
+            )
 
     @classmethod
     def on_input_data(cls, data: bytes):
@@ -87,13 +126,30 @@ class XiaoAI:
                 logger.debug(f"[XiaoAI] 忽略无法解析的指令行: {raw_line}")
                 return
 
+            header = line.get("header", {}) if isinstance(line.get("header"), dict) else {}
+            dialog_id = header.get("dialog_id", "")
+            namespace = header.get("namespace")
+            header_name = header.get("name")
+
+            if dialog_id and dialog_id in cls._suppressed_dialog_ids:
+                if namespace in {"Nlp", "SpeechSynthesizer", "AudioPlayer"}:
+                    await cls._suppress_dialog(
+                        dialog_id,
+                        f"{namespace}.{header_name}",
+                    )
+                    return
+                if namespace == "Dialog" and header_name == "Finish":
+                    cls._suppressed_dialog_ids.discard(dialog_id)
+                    logger.debug(
+                        f"[XiaoAI] Cleared suppressed dialog: {dialog_id}"
+                    )
+                    return
+
             if (
                 line
                 and isinstance(line.get("header"), dict)
-                and line.get("header", {}).get("namespace") == "SpeechRecognizer"
+                and namespace == "SpeechRecognizer"
             ):
-                header_name = line.get("header", {}).get("name")
-                
                 if header_name == "RecognizeResult":
                     payload = line.get("payload", {})
                     if not isinstance(payload, dict):
@@ -119,6 +175,9 @@ class XiaoAI:
                         logger.wakeup("小爱同学", module="XiaoAI")
                         cls.conversation.reset_retries()
                         EventManager.on_interrupt()
+                    elif text and is_final and cls._is_external_wakeup_text(text):
+                        await cls._suppress_dialog(dialog_id, text)
+                        return
                     elif text and is_final:
                         logger.info(f"[XiaoAI] 🔥 收到指令: {text}")
                         cls.conversation.reset_retries()
@@ -135,9 +194,8 @@ class XiaoAI:
             elif (
                 line
                 and isinstance(line.get("header"), dict)
-                and line.get("header", {}).get("namespace") == "AudioPlayer"
+                and namespace == "AudioPlayer"
             ):
-                header_name = line.get("header", {}).get("name")
                 cls.conversation.handle_audio_player_instruction(header_name)
         elif event_type == "playing":
             if not isinstance(event_data, str):
