@@ -18,6 +18,7 @@ class WakeupSessionManager:
         self.config = ConfigManager.instance()
         self._openclaw_controller = None
         self._openclaw_task: asyncio.Task | None = None
+        self._xiaozhi_future: asyncio.Future | None = None
 
     def _get_loop(self):
         app = get_app()
@@ -49,6 +50,14 @@ class WakeupSessionManager:
 
         loop = self._get_loop()
 
+        # Stop XiaoZhi wakeup session (cancels futures + aborts server audio)
+        if self._xiaozhi_future and not self._xiaozhi_future.done():
+            self._xiaozhi_future.cancel()
+        self._xiaozhi_future = None
+        xiaozhi = get_xiaozhi()
+        if xiaozhi:
+            xiaozhi.stop_wakeup_session()
+
         # Cancel the OpenClaw asyncio task (interrupts any blocking TTS await)
         if self._openclaw_task and not self._openclaw_task.done():
             loop.call_soon_threadsafe(self._openclaw_task.cancel)
@@ -65,9 +74,16 @@ class WakeupSessionManager:
         xiaozhi = get_xiaozhi()
         if xiaozhi:
             xiaozhi._is_first_round = True
-            asyncio.run_coroutine_threadsafe(
+            future = asyncio.run_coroutine_threadsafe(
                 xiaozhi.start_wakeup_session(), self._get_loop()
             )
+            self._xiaozhi_future = future
+
+            def _clear_future(done_future):
+                if self._xiaozhi_future is done_future:
+                    self._xiaozhi_future = None
+
+            future.add_done_callback(_clear_future)
 
     def on_speech(self, speech_buffer: bytes):
         """Called by VAD when speech is detected."""
