@@ -6,6 +6,7 @@ Provides endpoints to play text/audio remotely
 import asyncio
 import json
 import os
+import tempfile
 
 import open_xiaoai_server
 from aiohttp import web
@@ -200,16 +201,6 @@ class APIServer:
                     status=400
                 )
 
-            # Read file content into memory
-            audio_data = bytearray()
-            while True:
-                chunk = await field.read_chunk(size=8192)
-                if not chunk:
-                    break
-                audio_data.extend(chunk)
-
-            logger.info(f"[APIServer] Received file: {filename}, size: {len(audio_data)} bytes, blocking={blocking}, sample_rate={sample_rate}")
-
             speaker = get_speaker()
             if not speaker:
                 return web.json_response(
@@ -217,37 +208,35 @@ class APIServer:
                     status=503
                 )
 
-            audio_format = os.path.splitext(filename)[1].lstrip(".").lower() or "mp3"
-            pcm_data = open_xiaoai_server.decode_audio(
-                bytes(audio_data),
-                format=audio_format,
-                sample_rate=sample_rate,
-            )
-            logger.info(f"[APIServer] Decoded to PCM via Rust: {len(pcm_data)} bytes at {sample_rate}Hz")
+            suffix = os.path.splitext(filename)[1] or ".mp3"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+                total_size = 0
+                while True:
+                    chunk = await field.read_chunk(size=8192)
+                    if not chunk:
+                        break
+                    temp_file.write(chunk)
+                    total_size += len(chunk)
+                temp_path = temp_file.name
 
-            # Play audio buffer directly (chunked to avoid WebSocket message size limit)
+            logger.info(f"[APIServer] Received file: {filename}, size: {total_size} bytes, blocking={blocking}, sample_rate={sample_rate}")
+            logger.info(f"[APIServer] Saved upload to temp file: {temp_path}")
+
             async def play_audio():
                 try:
-                    # 分块发送，每块 1MB (避免超过 WebSocket 16MB 限制)
-                    # Note: 实测 1MB 是稳定的大小，Base64 后约 1.3MB，安全余量充足
-                    CHUNK_SIZE = 1 * 1024 * 1024  # 1MB
-                    total_size = len(pcm_data)
-                    offset = 0
-
-                    logger.info(f"[APIServer] Playing file in chunks: {total_size} bytes, chunk_size={CHUNK_SIZE}")
-
-                    while offset < total_size:
-                        chunk = pcm_data[offset:offset + CHUNK_SIZE]
-                        await speaker.play(buffer=chunk, blocking=False)
-                        offset += len(chunk)
-                        # 增加延迟，确保每块发送完成，避免队列累积
-                        await asyncio.sleep(0.05)
-
-                    logger.info(f"[APIServer] Finished playing: {filename}")
-                    return True
-                except Exception as e:
-                    logger.error(f"[APIServer] Error playing file: {e}")
-                    return False
+                    success = await speaker.play_server_file(
+                        temp_path,
+                        blocking=True,
+                        sample_rate=sample_rate,
+                    )
+                    if success:
+                        logger.info(f"[APIServer] Finished playing: {filename}")
+                    else:
+                        logger.error(f"[APIServer] Error playing file: {filename}")
+                    return success
+                finally:
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
 
             if blocking:
                 # Wait for playback to complete
@@ -256,7 +245,7 @@ class APIServer:
                     "success": success,
                     "message": f"Finished playing: {filename}",
                     "filename": filename,
-                    "size": len(audio_data),
+                    "size": total_size,
                     "sample_rate": sample_rate
                 })
             else:
@@ -266,7 +255,7 @@ class APIServer:
                     "success": True,
                     "message": f"Playing file: {filename}",
                     "filename": filename,
-                    "size": len(audio_data),
+                    "size": total_size,
                     "sample_rate": sample_rate
                 })
 

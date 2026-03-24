@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use serde_json::json;
 use std::collections::VecDeque;
+use std::path::Path;
 use std::time::Instant;
 use tokio::sync::mpsc;
 
@@ -88,6 +89,42 @@ impl PcmPlaybackBuffer {
     }
 }
 
+async fn play_pcm_with_buffer(pcm: Vec<u8>, sample_rate: u32) {
+    let started_at = Instant::now();
+    let pcm_len = pcm.len();
+    let mut playback_buffer = PcmPlaybackBuffer::new(sample_rate);
+
+    playback_buffer.push(&pcm);
+    for pcm_chunk in playback_buffer.drain_remaining() {
+        send_pcm(pcm_chunk).await;
+    }
+
+    let total_ms = started_at.elapsed().as_millis();
+    let playback_duration_ms = pcm_len as u128 * 1000 / (sample_rate as u128 * 2);
+    let remaining_ms = playback_duration_ms.saturating_sub(total_ms);
+
+    crate::pylog!(
+        "[TTS] PCM playback summary: sample_rate={}, total={} ms, pcm={} bytes, remaining={} ms",
+        sample_rate,
+        total_ms,
+        pcm_len,
+        remaining_ms,
+    );
+
+    if remaining_ms > 0 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(remaining_ms as u64)).await;
+    }
+}
+
+fn detect_format_from_path(path: &str) -> String {
+    Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .filter(|ext| !ext.is_empty())
+        .unwrap_or_else(|| "mp3".to_string())
+}
+
 /// Stream TTS: fetch audio from Doubao API, decode to PCM in chunks, and play via WebSocket.
 /// Supports MP3, OGG Vorbis, WAV, FLAC formats.
 #[pyfunction]
@@ -117,7 +154,15 @@ pub fn tts_stream_play(
             let format = format.clone();
             async move {
                 client
-                    .stream_audio(&text, &format, sample_rate, speed, context_texts, emotion, tx)
+                    .stream_audio(
+                        &text,
+                        &format,
+                        sample_rate,
+                        speed,
+                        context_texts,
+                        emotion,
+                        tx,
+                    )
                     .await
             }
         });
@@ -268,7 +313,7 @@ pub fn tts_play(
         let pcm_len = pcm.len();
         let pcm_ready_ms = started_at.elapsed().as_millis();
 
-        send_pcm(pcm).await;
+        play_pcm_with_buffer(pcm, sample_rate).await;
 
         let total_ms = started_at.elapsed().as_millis();
         let playback_duration_ms = pcm_len as u128 * 1000 / (sample_rate as u128 * 2);
@@ -284,10 +329,43 @@ pub fn tts_play(
             pcm_len,
             remaining_ms,
         );
+        Ok(())
+    })
+}
 
-        if remaining_ms > 0 {
-            tokio::time::sleep(tokio::time::Duration::from_millis(remaining_ms as u64)).await;
-        }
+#[pyfunction]
+#[pyo3(signature = (file_path, sample_rate=24000))]
+pub fn play_audio_file(
+    py: Python<'_>,
+    file_path: String,
+    sample_rate: u32,
+) -> PyResult<Bound<'_, PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let started_at = Instant::now();
+        let audio_data = std::fs::read(&file_path).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "read file failed (path={}): {}",
+                file_path, e
+            ))
+        })?;
+        let format = detect_format_from_path(&file_path);
+        let encoded_audio_len = audio_data.len();
+
+        let pcm = decode_audio_to_pcm(&audio_data, &format, sample_rate)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+        let pcm_len = pcm.len();
+        let pcm_ready_ms = started_at.elapsed().as_millis();
+
+        play_pcm_with_buffer(pcm, sample_rate).await;
+
+        crate::pylog!(
+            "[TTS] Local file playback summary: format={}, pcm_ready={} ms, encoded={} bytes, pcm={} bytes, path={}",
+            format,
+            pcm_ready_ms,
+            encoded_audio_len,
+            pcm_len,
+            file_path,
+        );
 
         Ok(())
     })
@@ -320,7 +398,15 @@ pub fn tts_stream_collect(
             let format = format.clone();
             async move {
                 client
-                    .stream_audio(&text, &format, sample_rate, speed, context_texts, emotion, tx)
+                    .stream_audio(
+                        &text,
+                        &format,
+                        sample_rate,
+                        speed,
+                        context_texts,
+                        emotion,
+                        tx,
+                    )
                     .await
             }
         });
@@ -450,5 +536,6 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tts_play, m)?)?;
     m.add_function(wrap_pyfunction!(tts_stream_collect, m)?)?;
     m.add_function(wrap_pyfunction!(decode_audio, m)?)?;
+    m.add_function(wrap_pyfunction!(play_audio_file, m)?)?;
     Ok(())
 }

@@ -1,7 +1,12 @@
+import asyncio
+import os
 from typing import Literal
+
+import open_xiaoai_server
 
 from core.ref import get_xiaoai, set_speaker
 from core.utils.base import json_decode, json_encode
+from core.utils.logger import logger
 
 
 class CommandResult:
@@ -39,6 +44,7 @@ class SpeakerManager:
         text=None,
         url=None,
         buffer=None,
+        server_file=None,
         blocking=True,
         timeout=10 * 60 * 1000,
     ):
@@ -49,9 +55,16 @@ class SpeakerManager:
             text: 文字内容
             url: 音频链接
             buffer: 音频流
+            server_file: 服务端本地音频文件路径
             timeout: 超时时长（毫秒），默认10分钟
-            blocking: 是否阻塞运行(仅对播放文字、音频链接有效)
+            blocking: 是否阻塞运行
         """
+        if server_file is not None:
+            return await self.play_server_file(
+                file_path=server_file,
+                blocking=blocking,
+            )
+
         if buffer is not None:
             return get_xiaoai().on_output_data(buffer)
 
@@ -73,6 +86,33 @@ class SpeakerManager:
 
         res = await self.run_shell(command, timeout=timeout)
         return '"code": 0' in res.stdout if res else False
+
+    async def play_server_file(
+        self,
+        file_path: str,
+        blocking: bool = True,
+        sample_rate: int = 24000,
+    ) -> bool:
+        """播放服务端本地音频文件（解码为 PCM 后推流到音箱）"""
+        if not file_path:
+            raise ValueError("file_path is required")
+
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(file_path)
+
+        logger.info(
+            f"[Speaker] Playing local file via Rust audio pipeline: {file_path}, "
+            f"sample_rate={sample_rate}"
+        )
+
+        if blocking:
+            await open_xiaoai_server.play_audio_file(file_path, sample_rate=sample_rate)
+            return True
+
+        asyncio.create_task(
+            open_xiaoai_server.play_audio_file(file_path, sample_rate=sample_rate)
+        )
+        return True
 
     async def wake_up(self, awake=True, silent=True):
         """

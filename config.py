@@ -59,6 +59,11 @@ async def before_wakeup(speaker, text, source, app):
         #     await speaker.play(text="龙虾来了")
         #     return "openclaw"
 
+        # --- 示例三：进入 OpenClaw 前播放服务端本地开场白 ---
+        # if "龙虾" in text:
+        #     await speaker.play(server_file="/path/to/openclaw_intro.wav")
+        #     return "openclaw"
+
         # Route to OpenClaw Agent by wake word
         if "龙虾" in text:
             await speaker.play(text="龙虾来了")
@@ -71,7 +76,7 @@ async def before_wakeup(speaker, text, source, app):
         return None
 
     if source == "xiaoai":
-        # --- 示例三：小爱指令按用户名路由到不同 Session ---
+        # --- 示例四：小爱指令按用户名路由到不同 Session ---
         # if text == "召唤小美":
         #     app.set_openclaw_session_key("agent:xiaomei:open-xiaoai-bridge")
         #     await speaker.abort_xiaoai()
@@ -109,6 +114,9 @@ async def after_wakeup(speaker, source=None, session_key=None):
         可据此区分是哪个 Agent 退出，例如播放不同的退出提示语
     """
     if source == "openclaw":
+        # 示例：退出 OpenClaw 时播放服务端本地结束语
+        # await speaker.play(server_file="/path/to/openclaw_bye.wav")
+
         # 示例：按 agentId 区分退出提示语
         # session_key 格式：agent:<agentId>:<rest>，第二段即 agentId
         # agent_id = session_key.split(":")[1] if session_key else None

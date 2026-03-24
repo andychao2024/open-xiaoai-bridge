@@ -602,6 +602,17 @@ APP_CONFIG = {
     - 英文唤醒词用空格分开（如 `"open ai"`）
     - 换更易识别的唤醒词
 
+5. **如何播放服务端本地音频文件？**
+
+    可以直接调用：
+
+    ```python
+    await speaker.play(server_file="/path/to/hello.wav")
+    ```
+
+    这里的路径是**运行 open-xiaoai-bridge 的这台机器**上的本地文件路径，不是音箱里的路径。
+    如果是 Docker 部署，请记得把对应目录挂载进容器。
+
 ### 🦞 OpenClaw
 
 1. **首次连接出现 pairing required？**
