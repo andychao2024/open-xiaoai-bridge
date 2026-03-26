@@ -99,15 +99,16 @@ API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 ./scripts/start.sh
 
 ### ⚙️ 环境变量
 
-| 变量                  | 说明          | 默认值           |
-| ------------------- | ----------- | ------------- |
-| `XIAOZHI_ENABLE`    | 启用小智 AI     | 禁用            |
-| `OPENCLAW_ENABLE`   | 启用 OpenClaw | 禁用            |
-| `API_SERVER_ENABLE` | 启用 HTTP API | 禁用            |
-| `API_SERVER_HOST`   | API 监听地址    | `127.0.0.1`   |
-| `API_SERVER_PORT`   | API 监听端口    | `9092`        |
-| `CONFIG_PATH`       | 自定义配置文件路径   | `./config.py` |
-| `LOGLEVEL`          | 日志级别        | `INFO`        |
+| 变量                   | 说明            | 默认值           |
+| -------------------- | ------------- | ------------- |
+| `XIAOZHI_ENABLE`     | 启用小智 AI     | 禁用            |
+| `OPENCLAW_ENABLE`    | 启用 OpenClaw | 禁用            |
+| `API_SERVER_ENABLE`  | 启用 HTTP API | 禁用            |
+| `AUDIO_INPUT_ENABLE` | 启用音频输入（关闭后小智/KWS/local\_asr不可用） | 启用            |
+| `API_SERVER_HOST`    | API 监听地址    | `127.0.0.1`   |
+| `API_SERVER_PORT`    | API 监听端口    | `9092`        |
+| `CONFIG_PATH`        | 自定义配置文件路径   | `./config.py` |
+| `LOGLEVEL`           | 日志级别        | `INFO`        |
 
 ***
 

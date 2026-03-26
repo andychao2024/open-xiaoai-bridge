@@ -106,6 +106,25 @@ class MainApp:
         """
         self._enable_api_server = enable_api_server
 
+        # Check audio input status
+        audio_input_enabled = os.environ.get(
+            "AUDIO_INPUT_ENABLE", "true"
+        ).strip().lower() in ("true", "1", "yes", "on")
+        
+        if not audio_input_enabled and self._enable_xiaozhi:
+            raise RuntimeError(
+                "Audio input is disabled (AUDIO_INPUT_ENABLE=false) but XiaoZhi is enabled. "
+                "Either enable audio input or disable XiaoZhi."
+            )
+        
+        if not audio_input_enabled and self._enable_openclaw:
+            openclaw_input_mode = self.config.get_app_config("openclaw.input_mode", "local_asr")
+            if openclaw_input_mode == "local_asr":
+                raise RuntimeError(
+                    "Audio input is disabled (AUDIO_INPUT_ENABLE=false) but OpenClaw uses 'local_asr' mode. "
+                    "Either enable audio input, or set openclaw.input_mode='xiaoai_asr' in config."
+                )
+
         # Create event loop thread
         self.loop_thread = threading.Thread(target=self._run_event_loop)
         self.loop_thread.daemon = True
@@ -146,13 +165,23 @@ class MainApp:
 
         # Start audio services
         if self._enable_xiaozhi or self._enable_openclaw:
-            from core.services.audio.vad import VAD
-            from core.services.audio.kws import KWS
-            VAD.start()
-            KWS.start()
+            # Check audio input via env var (same as Rust), default True
+            # Supports: "true"/"false", "1"/"0", "yes"/"no", "on"/"off"
+            audio_input_enabled = os.environ.get(
+                "AUDIO_INPUT_ENABLE", "true"
+            ).strip().lower() in ("true", "1", "yes", "on")
+            if audio_input_enabled:
+                from core.services.audio.vad import VAD
+                from core.services.audio.kws import KWS
+                VAD.start()
+                KWS.start()
+                logger.info("[MainApp] Audio input enabled (VAD/KWS started)")
+            else:
+                logger.info("[MainApp] Audio input disabled (VAD/KWS not started)")
 
-            # Pre-warm local ASR only when OpenClaw is configured to use it.
-            if self._enable_openclaw:
+            # Pre-warm local ASR only when OpenClaw is configured to use it
+            # and audio input is enabled.
+            if audio_input_enabled and self._enable_openclaw:
                 input_mode = self.config.get_app_config(
                     "openclaw.input_mode",
                     "local_asr",

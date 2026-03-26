@@ -51,9 +51,13 @@ def setup_config():
     openclaw_env = os.environ.get("OPENCLAW_ENABLE") or os.environ.get("OPENCLAW_ENABLED") or ""
     enable_openclaw = openclaw_env.lower() in ("1", "true", "yes")
 
-    logger.info(f"[Main] Config: XIAOZHI_ENABLE={os.environ.get('XIAOZHI_ENABLE', 'not set')}, "
-                f"API_SERVER_ENABLE={os.environ.get('API_SERVER_ENABLE', 'not set')}, "
-                f"OPENCLAW_ENABLE={os.environ.get('OPENCLAW_ENABLE', os.environ.get('OPENCLAW_ENABLED', 'not set'))}")
+    # 计算 AUDIO_INPUT_ENABLE 实际生效的值（默认 1/true）
+    audio_input_enabled = os.environ.get("AUDIO_INPUT_ENABLE", "1").strip().lower() in ("1", "true", "yes", "on")
+    
+    logger.info(f"[Main] ENV: XIAOZHI_ENABLE={os.environ.get('XIAOZHI_ENABLE') or 'not set (disabled)'}, "
+                f"API_SERVER_ENABLE={os.environ.get('API_SERVER_ENABLE') or 'not set (disabled)'}, "
+                f"OPENCLAW_ENABLE={os.environ.get('OPENCLAW_ENABLE') or os.environ.get('OPENCLAW_ENABLED') or 'not set (disabled)'}, "
+                f"AUDIO_INPUT_ENABLE={1 if audio_input_enabled else 0}")
     logger.info(f"[Main] Using config file: {config_path}")
 
     # 打印模块启用情况

@@ -201,7 +201,7 @@ APP_CONFIG = {
         # 输入模式：
         #   - "local_asr": 现有链路，使用本地 VAD + SherpaASR
         #   - "xiaoai_asr": 实验链路，唤醒小爱后接管原生 ASR 结果给 OpenClaw
-        "input_mode": "xiaoai_asr",
+        "input_mode": "local_asr",
         # session_key 格式：agent:<agentId>:<rest>
         #   agentId: OpenClaw 中配置的 Agent ID（默认为 main）
         #   rest:    会话标识，可自由命名，用于区分不同来源/场景 （默认为 open-xiaoai-bridge)

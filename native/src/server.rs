@@ -11,28 +11,45 @@ use pyo3::types::PyBytes;
 use pyo3::types::PyString;
 use pyo3::Python;
 use serde_json::json;
+use std::env;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::accept_async;
 
 pub struct AppServer;
 
+/// Check if audio input is enabled via environment variable.
+/// Supports: "true"/"false", "1"/"0", "yes"/"no", etc.
+/// Defaults to true if not set or invalid.
+fn is_audio_input_enabled() -> bool {
+    match env::var("AUDIO_INPUT_ENABLE") {
+        Ok(val) => {
+            let val = val.trim().to_lowercase();
+            matches!(val.as_str(), "true" | "1" | "yes" | "on")
+        }
+        Err(_) => true,
+    }
+}
+
 async fn test() -> Result<(), AppError> {
     SpeakerManager::play_text("已连接").await?;
 
-    let _ = RPC::instance()
-        .call_remote(
-            "start_recording",
-            Some(json!(AudioConfig {
-                pcm: "noop".into(),
-                channels: 1,
-                bits_per_sample: 16,
-                sample_rate: 16000,
-                period_size: 1440 / 4,
-                buffer_size: 1440,
-            })),
-            None,
-        )
-        .await;
+    // Only start recording if audio input is enabled
+    if is_audio_input_enabled() {
+        let _ = RPC::instance()
+            .call_remote(
+                "start_recording",
+                Some(json!(AudioConfig {
+                    pcm: "noop".into(),
+                    channels: 1,
+                    bits_per_sample: 16,
+                    sample_rate: 16000,
+                    period_size: 1440 / 4,
+                    buffer_size: 1440,
+                })),
+                None,
+            )
+            .await;
+    }
 
     // aplay is started lazily by ensure_player_ready() on first audio send,
     // avoiding empty-buffer underruns from idling aplay processes.
