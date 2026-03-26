@@ -91,6 +91,8 @@ class XiaoAI:
             await cls.speaker.run_shell(
                 "killall tts_play.sh miplayer 2>/dev/null; mphelper pause"
             )
+            if is_new_dialog:
+                await cls.speaker.wake_up(awake=False)
         except Exception as exc:
             logger.debug(
                 f"[XiaoAI] Failed to pause suppressed dialog {dialog_id}: {exc}"

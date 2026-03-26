@@ -51,6 +51,7 @@ class OpenClawConversationController:
 
     LOCAL_ASR_INPUT = "local_asr"
     XIAOAI_ASR_INPUT = "xiaoai_asr"
+    XIAOAI_ASR_TIMEOUT = "__timeout__"
 
     def __init__(self):
         self.config = ConfigManager.instance()
@@ -241,10 +242,8 @@ class OpenClawConversationController:
         """Execute a single conversation turn using XiaoAI native ASR."""
         text = await self._wait_for_xiaoai_asr_text()
         if text is None:
+            logger.debug("XiaoAI native ASR turn timed out", module="OpenClaw Conv")
             return "timeout"
-        if not text:
-            logger.debug("XiaoAI native ASR empty, retrying", module="OpenClaw Conv")
-            return "continue"
 
         for kw in self.exit_keywords:
             if kw in text:
@@ -361,20 +360,39 @@ class OpenClawConversationController:
             logger.error("Speaker not available", module="OpenClaw Conv")
             return None
 
-        self._xiaoai_asr_future = self._loop.create_future()
-        try:
-            logger.debug("Triggering XiaoAI native ASR", module="OpenClaw Conv")
-            await speaker.wake_up(awake=True, silent=True)
-            result = await asyncio.wait_for(
-                self._xiaoai_asr_future,
-                timeout=self.timeout + 5,
-            )
-            return result
-        except asyncio.TimeoutError:
-            logger.debug("XiaoAI native ASR timeout", module="OpenClaw Conv")
-            return None
-        finally:
-            self._xiaoai_asr_future = None
+        deadline = self._loop.time() + self.timeout
+        while self.active:
+            remaining = deadline - self._loop.time()
+            if remaining <= 0:
+                logger.info("XiaoAI native ASR hit outer wait timeout", module="OpenClaw Conv")
+                return None
+
+            self._xiaoai_asr_future = self._loop.create_future()
+            try:
+                wait_seconds = max(0.1, remaining)
+                logger.debug(
+                    f"Triggering XiaoAI native ASR, waiting up to {wait_seconds:.1f}s",
+                    module="OpenClaw Conv",
+                )
+                await speaker.wake_up(awake=True, silent=True)
+                result = await asyncio.wait_for(
+                    self._xiaoai_asr_future,
+                    timeout=wait_seconds,
+                )
+                if result == self.XIAOAI_ASR_TIMEOUT:
+                    logger.debug(
+                        "XiaoAI native ASR ended without speech (native timeout), retrying",
+                        module="OpenClaw Conv",
+                    )
+                    continue
+                return result
+            except asyncio.TimeoutError:
+                logger.info("XiaoAI native ASR hit outer wait timeout", module="OpenClaw Conv")
+                return None
+            finally:
+                self._xiaoai_asr_future = None
+
+        return None
 
     def consume_xiaoai_recognize_result(
         self,
@@ -405,12 +423,15 @@ class OpenClawConversationController:
             return True
 
         if normalized_text:
-            logger.info(f"XiaoAI native ASR recognized: {normalized_text}", module="OpenClaw Conv")
+            logger.debug(f"XiaoAI native ASR recognized: {normalized_text}", module="OpenClaw Conv")
             self._resolve_xiaoai_asr_future(normalized_text)
             return True
 
-        logger.debug("XiaoAI native ASR returned empty final text", module="OpenClaw Conv")
-        self._resolve_xiaoai_asr_future("")
+        logger.debug(
+            "XiaoAI native ASR received empty final result",
+            module="OpenClaw Conv",
+        )
+        self._resolve_xiaoai_asr_future(self.XIAOAI_ASR_TIMEOUT)
         return True
 
     def _resolve_xiaoai_asr_future(self, text: str):

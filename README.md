@@ -356,7 +356,7 @@ xiaoai_asr: 接管小爱原生 ASR
 
 ```python
 "openclaw": {
-    "input_mode": "xiaoai_asr",
+    "input_mode": "xiaoai_asr",  # 或 "local_asr"
 }
 ```
 
@@ -515,7 +515,6 @@ async def after_wakeup(speaker, source=None, session_key=None):
 
 ```python
 "openclaw": {
-    "input_mode": "xiaoai_asr",
     # 自动播放/连续对话用：约束输出格式
     "rule_prompt": "注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内",
     # Agent 自主播报用：告诉 Agent 需要调用 skill
