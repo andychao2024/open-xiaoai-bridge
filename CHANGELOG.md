@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 ### 重点更新
 
 - 新增小爱原生 ASR 模式 (`OPENCLAW_XIAOAI_NATIVE_ASR`)，可在 OpenClaw 连续对话中使用小爱自带的语音识别能力，降低对离线 ASR 模型的依赖。
-- 新增可配置的音频输入增益 (`AUDIO_INPUT_GAIN`)，支持调节麦克风输入音量以优化唤醒词识别灵敏度。
+- 新增可配置的音频输入增益 (config `audio.input_gain`)，支持调节麦克风输入音量以优化唤醒词识别灵敏度。
 - 新增音频输入开关 (`AUDIO_INPUT_ENABLE`)，可在不需要音频输入时禁用以节省系统资源。
 - 新增发送消息提示音，改善 OpenClaw 连续对话的交互体验。(#11 by @codertinat)
 
