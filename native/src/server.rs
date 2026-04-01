@@ -98,9 +98,17 @@ impl AppServer {
     }
 
     async fn handle_connection(stream: TcpStream, addr: std::net::SocketAddr) {
-        let Ok(ws_stream) = AppServer::connect(stream).await else {
-            crate::pylog!("[AppServer] ❌ 连接异常: {}", addr);
-            return;
+        let ws_stream = match AppServer::connect(stream).await {
+            Ok(ws_stream) => ws_stream,
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("401") || msg.contains("Unauthorized") {
+                    crate::pylog!("[AppServer] ❌ 鉴权失败: {}", addr);
+                } else {
+                    crate::pylog!("[AppServer] ❌ 连接异常: {} ({})", addr, msg);
+                }
+                return;
+            }
         };
         crate::pylog!("[AppServer] ✅ 已连接: {:?}", addr);
         AppServer::init(ws_stream).await;
