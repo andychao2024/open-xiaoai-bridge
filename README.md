@@ -95,6 +95,9 @@ cd open-xiaoai-bridge
 
 # 启动（按需设置环境变量）
 API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 ./scripts/start.sh
+
+# 启用 Client 鉴权（需与音箱端 token 一致）
+OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
 ```
 
 ### ⚙️ 环境变量
@@ -107,6 +110,7 @@ API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 ./scripts/start.sh
 | `AUDIO_INPUT_ENABLE` | 启用音频输入（关闭后小智/KWS/local\_asr不可用） | 启用            |
 | `API_SERVER_HOST`    | API 监听地址    | `127.0.0.1`   |
 | `API_SERVER_PORT`    | API 监听端口    | `9092`        |
+| `OPEN_XIAOAI_TOKEN`  | Client 鉴权 token，设置后仅持有相同 token 的 Client 才能连接 | 不鉴权 |
 | `CONFIG_PATH`        | 自定义配置文件路径   | `./config.py` |
 | `LOGLEVEL`           | 日志级别        | `INFO`        |
 
