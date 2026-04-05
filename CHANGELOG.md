@@ -6,13 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### 重点更新
 
-- 新增 WebSocket Bearer Token 鉴权支持，可通过配置 `AUTH_TOKEN` 环境变量为 WebSocket 连接启用可选身份验证。
-- 连接日志新增鉴权失败原因输出，便于排查认证问题。
+- 新增 WebSocket Bearer Token 鉴权支持，设置 `OPEN_XIAOAI_TOKEN` 环境变量后，客户端须在握手时携带 `Authorization: Bearer <token>` 请求头，否则连接将被拒绝（返回 401）。未设置该变量时保持原有无鉴权行为。
+- 连接日志新增鉴权失败原因输出，方便快速定位认证问题。
 
 ### 修复与优化
 
-- 修复 agent 事件未按 `run_id` 过滤的问题，避免多次唤醒场景下的内存泄漏。
-- 优化 Docker 构建流程，拆分为并行原生架构构建 + manifest 合并，提升 CI 构建效率。
+- 修复 OpenClaw agent 事件未按 `run_id` 过滤的问题，避免多次唤醒后事件监听器持续累积导致的内存泄漏。
 
 ### Full Changelog
 
