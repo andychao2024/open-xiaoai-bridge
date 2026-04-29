@@ -23,7 +23,7 @@ import open_xiaoai_server
 
 from core.openclaw import OpenClawManager
 from core.ref import get_speaker, get_vad
-from core.services.audio.asr.sherpa import SherpaASR
+from core.services.audio.asr import ASRService
 from core.utils.config import ConfigManager
 
 _NOTIFY_SOUND_PATH = os.path.join(
@@ -216,7 +216,7 @@ class OpenClawConversationController:
         )
 
         # 2. ASR: convert speech to text
-        text = SherpaASR.asr(speech_bytes, sample_rate=16000)
+        text = ASRService.asr(speech_bytes, sample_rate=16000)
         if not text:
             logger.debug("ASR empty, retrying", module="OpenClaw Conv")
             return "continue"

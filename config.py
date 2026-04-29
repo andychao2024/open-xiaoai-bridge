@@ -168,12 +168,31 @@ APP_CONFIG = {
         "gain": 1.0,
     },
     "asr": {
-        # 支持 "sense_voice"（默认）、"paraformer" 或 "fire_red_asr"
+        # 支持 "sense_voice"（默认）、"paraformer"、"fire_red_asr" 或 "doubao"
         "model": "sense_voice",
-        # 是否优先使用 INT8 量化模型
+        # 是否优先使用 INT8 量化模型（仅本地模型生效）
         "int8": True,
-        # 可选：显式指定 core/models/ 下的模型目录名
+        # 可选：显式指定 core/models/ 下的模型目录名（仅本地模型生效）
         # "model_dir": "",
+        "doubao": {
+            # "standard": 录音文件识别标准版，调用 /submit + /query
+            # "flash": 录音文件极速版，调用 /recognize/flash
+            "mode": "standard",
+            "app_key": "你的 App Key",
+            "access_key": "你的 Access Key",
+            # 火山 X-Api-Resource-Id：
+            # standard 可选：
+            #   "volc.bigasr.auc"  - 豆包录音文件识别模型 1.0
+            #   "volc.seedasr.auc" - 豆包录音文件识别模型 2.0
+            # flash 可选：
+            #   "volc.bigasr.auc_turbo" - 录音文件极速版
+            "resource_id": "volc.seedasr.auc",
+            "language": "",
+            "submit_timeout": 10,
+            "query_timeout": 10,
+            "poll_interval": 0.5,
+            "max_wait_seconds": 20,
+        },
     },
     "xiaozhi": {
         "OTA_URL": "http://127.0.0.1:8003/xiaozhi/ota/",
