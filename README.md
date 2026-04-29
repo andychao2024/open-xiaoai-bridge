@@ -656,14 +656,14 @@ APP_CONFIG = {
 
 2. **如何切换 ASR 语音识别模型？**
 
-    仅 `openclaw.input_mode = "local_asr"` 时，本地离线 ASR 配置才会生效。在 `config.py` 中配置：
+    仅 `openclaw.input_mode = "local_asr"` 时，ASR 配置才会生效。在 `config.py` 中配置：
 
     ```python
     APP_CONFIG = {
         "asr": {
-            "model": "sense_voice",  # "sense_voice"（默认）/ "paraformer" / "fire_red_asr"
-            "int8": True,               # 优先加载 INT8 量化模型
-            # "model_dir": "sherpa-onnx-fire-red-asr-xxx",  # 可选：显式指定模型目录
+            "model": "sense_voice",  # "sense_voice"（默认）/ "paraformer" / "fire_red_asr" / "doubao"
+            "int8": True,            # 本地模型优先加载 INT8 量化模型
+            # "model_dir": "sherpa-onnx-fire-red-asr-xxx",  # 可选：显式指定本地模型目录
         },
     }
     ```
@@ -673,8 +673,40 @@ APP_CONFIG = {
     | `sense_voice` | [SenseVoice-Small](https://github.com/FunAudioLLM/SenseVoice) | 多任务语音理解模型，支持中/英/日/韩/粤五语种自动识别，附带语言检测、ITN 和情感识别，推理极快 |
     | `paraformer` | [Paraformer-Trilingual](https://github.com/modelscope/FunASR) | 专注语音转写的工业级非自回归模型，支持中文/英文/粤语，中文识别精度高 |
     | `fire_red_asr` | [FireRedASR](https://github.com/FireRedTeam/FireRedASR) | FireRedASR 是一系列开源的工业级自动语音识别 (ASR) 模型，支持普通话、汉语方言和英语，在公开的普通话 ASR 基准测试中达到了新的最先进水平 (SOTA)，同时还提供了出色的歌词识别能力。 |
+    | `doubao` | [火山引擎豆包语音识别](https://www.volcengine.com/docs/6561/1354868?lang=zh) | 云端录音文件识别，支持标准版和极速版，需要配置火山引擎 App Key / Access Key |
 
-    将对应模型目录放到 `core/models/`（Docker 部署放 `./models/`）下即可，不配置默认使用 `sense_voice`。
+    使用本地模型时，将对应模型目录放到 `core/models/`（Docker 部署放 `./models/`）下即可，不配置默认使用 `sense_voice`。
+
+    使用豆包 ASR 时，将 `model` 改为 `"doubao"`，并填写 `asr.doubao`：
+
+    ```python
+    APP_CONFIG = {
+        "asr": {
+            "model": "doubao",
+            "doubao": {
+                # "standard": 录音文件识别标准版，调用 /submit + /query
+                # "flash": 录音文件极速版，调用 /recognize/flash
+                "mode": "standard",
+                "app_key": "你的 App Key",
+                "access_key": "你的 Access Key",
+                # 火山 X-Api-Resource-Id：
+                # standard 可选：
+                #   "volc.bigasr.auc"  - 豆包录音文件识别模型 1.0
+                #   "volc.seedasr.auc" - 豆包录音文件识别模型 2.0
+                # flash 可选：
+                #   "volc.bigasr.auc_turbo" - 录音文件极速版
+                "resource_id": "volc.seedasr.auc",
+                "language": "",
+                "submit_timeout": 10,
+                "query_timeout": 10,
+                "poll_interval": 0.5,
+                "max_wait_seconds": 20,
+            },
+        },
+    }
+    ```
+
+    `standard` 模式会把本地 PCM 封装为 wav 后以 base64 提交到标准版接口；如果你的火山账号不支持该请求形式，可切换为 `flash` 并将 `resource_id` 改为 `"volc.bigasr.auc_turbo"`。
 
 3. **如何打断 AI 的回答？**
 
